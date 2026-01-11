@@ -31,11 +31,21 @@ export const translations = {
     haveAccount: 'Already have an account?',
     
     // Chat
+    chatTitle: 'AI First Aid',
+    chatSubtitle: 'Get immediate health guidance',
     askQuestion: 'Describe your symptoms or ask a health question...',
+    typeMessage: 'Describe your symptoms...',
     send: 'Send',
+    stop: 'Stop',
     voiceInput: 'Voice Input',
     stopListening: 'Stop Listening',
     clearChat: 'Clear Chat',
+    newChat: 'New Chat',
+    welcomeChat: 'Hi, I\'m your AI First Aid Assistant',
+    chatDescription: 'Describe your symptoms or health concern and I\'ll provide immediate first aid guidance.',
+    suggestedPrompts: 'Try asking',
+    listenToResponse: 'Listen',
+    listening: 'Listening...',
     disclaimer: 'This is first aid guidance only. For medical emergencies, call 999.',
     
     // Emergency
@@ -137,11 +147,21 @@ export const translations = {
     haveAccount: 'Una akaunti tayari?',
     
     // Chat
+    chatTitle: 'Huduma ya Kwanza ya AI',
+    chatSubtitle: 'Pata mwongozo wa haraka wa afya',
     askQuestion: 'Eleza dalili zako au uliza swali la afya...',
+    typeMessage: 'Eleza dalili zako...',
     send: 'Tuma',
+    stop: 'Simama',
     voiceInput: 'Ingizo la Sauti',
     stopListening: 'Acha Kusikiliza',
     clearChat: 'Futa Gumzo',
+    newChat: 'Gumzo Jipya',
+    welcomeChat: 'Habari, mimi ni Msaidizi wako wa Huduma ya Kwanza wa AI',
+    chatDescription: 'Eleza dalili zako au wasiwasi wa afya na nitakupa mwongozo wa haraka wa huduma ya kwanza.',
+    suggestedPrompts: 'Jaribu kuuliza',
+    listenToResponse: 'Sikiliza',
+    listening: 'Inasikiliza...',
     disclaimer: 'Hii ni mwongozo wa huduma ya kwanza tu. Kwa dharura za kimatibabu, piga simu 999.',
     
     // Emergency
