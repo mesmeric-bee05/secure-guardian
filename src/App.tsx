@@ -9,6 +9,7 @@ import Chat from "./pages/Chat";
 import Emergency from "./pages/Emergency";
 import Profile from "./pages/Profile";
 import Dashboard from "./pages/Dashboard";
+import Admin from "./pages/Admin";
 import NotFound from "./pages/NotFound";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 
@@ -27,6 +28,7 @@ const App = () => (
           <Route path="/emergency" element={<ProtectedRoute><Emergency /></ProtectedRoute>} />
           <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
           <Route path="/dashboard" element={<ProtectedRoute requiredRoles={['chw', 'admin']}><Dashboard /></ProtectedRoute>} />
+          <Route path="/admin" element={<ProtectedRoute requiredRoles={['admin']}><Admin /></ProtectedRoute>} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
