@@ -5,10 +5,15 @@ import DashboardHeader from '@/components/dashboard/DashboardHeader';
 import StatsCards from '@/components/dashboard/StatsCards';
 import CasesList from '@/components/dashboard/CasesList';
 import CaseDetailModal from '@/components/dashboard/CaseDetailModal';
+import CaseTrendsChart from '@/components/dashboard/CaseTrendsChart';
+import PriorityDistributionChart from '@/components/dashboard/PriorityDistributionChart';
+import ResponseTimeChart from '@/components/dashboard/ResponseTimeChart';
+import StatusOverviewChart from '@/components/dashboard/StatusOverviewChart';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { Language } from '@/lib/translations';
 import { toast } from 'sonner';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 interface EmergencyCase {
   id: string;
@@ -21,6 +26,7 @@ interface EmergencyCase {
   notes: string | null;
   resolution_notes: string | null;
   created_at: string;
+  resolved_at?: string | null;
   profiles?: {
     full_name: string;
     phone_number: string | null;
@@ -166,12 +172,40 @@ const Dashboard = () => {
         criticalCases={stats.critical}
       />
 
-      <CasesList
-        cases={cases}
-        loading={loading}
-        language={language}
-        onCaseSelect={handleCaseSelect}
-      />
+      <div className="flex-1 overflow-auto">
+        <Tabs defaultValue="cases" className="h-full">
+          <div className="px-4 pt-2">
+            <TabsList className="grid w-full max-w-md grid-cols-2">
+              <TabsTrigger value="cases">
+                {language === 'en' ? 'Cases' : 'Kesi'}
+              </TabsTrigger>
+              <TabsTrigger value="analytics">
+                {language === 'en' ? 'Analytics' : 'Takwimu'}
+              </TabsTrigger>
+            </TabsList>
+          </div>
+
+          <TabsContent value="cases" className="h-[calc(100%-48px)] mt-0">
+            <CasesList
+              cases={cases}
+              loading={loading}
+              language={language}
+              onCaseSelect={handleCaseSelect}
+            />
+          </TabsContent>
+
+          <TabsContent value="analytics" className="p-4 space-y-4 overflow-auto">
+            <div className="grid gap-4 md:grid-cols-2">
+              <CaseTrendsChart cases={cases} language={language} />
+              <PriorityDistributionChart cases={cases} language={language} />
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <ResponseTimeChart cases={cases} language={language} />
+              <StatusOverviewChart cases={cases} language={language} />
+            </div>
+          </TabsContent>
+        </Tabs>
+      </div>
 
       <CaseDetailModal
         open={showCaseModal}
