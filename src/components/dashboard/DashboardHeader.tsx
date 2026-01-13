@@ -2,6 +2,7 @@ import { ArrowLeft, RefreshCw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import LanguageToggle from '@/components/ui/LanguageToggle';
+import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { Language } from '@/lib/translations';
 
 interface DashboardHeaderProps {
@@ -44,7 +45,8 @@ const DashboardHeader = ({
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
+          <ThemeToggle />
           <LanguageToggle language={language} onToggle={onLanguageChange} />
           <Button
             variant="ghost"
