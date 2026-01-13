@@ -27,6 +27,7 @@ interface EmergencyCase {
   resolution_notes: string | null;
   created_at: string;
   resolved_at?: string | null;
+  assigned_chw_id?: string | null;
   profiles?: {
     full_name: string;
     phone_number: string | null;
@@ -85,6 +86,51 @@ const Dashboard = () => {
       fetchCases();
     }
   }, [user, authLoading, isChw, isAdmin, navigate, fetchCases]);
+
+  // Real-time subscription for case updates
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase
+      .channel('emergency-cases-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'emergency_cases',
+        },
+        (payload) => {
+          console.log('Real-time update:', payload);
+          
+          if (payload.eventType === 'INSERT') {
+            const newCase = payload.new as EmergencyCase;
+            // Only add if it's for this CHW or user is admin
+            if (isAdmin() || newCase.assigned_chw_id === user.id) {
+              setCases(prev => [newCase, ...prev]);
+              toast.info(
+                language === 'en' 
+                  ? 'New case received' 
+                  : 'Kesi mpya imepokelewa'
+              );
+            }
+          } else if (payload.eventType === 'UPDATE') {
+            const updatedCase = payload.new as EmergencyCase;
+            setCases(prev => 
+              prev.map(c => c.id === updatedCase.id ? updatedCase : c)
+            );
+          } else if (payload.eventType === 'DELETE') {
+            const deletedId = payload.old.id;
+            setCases(prev => prev.filter(c => c.id !== deletedId));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user, isAdmin, language]);
 
   useEffect(() => {
     if (profile?.preferred_language) {

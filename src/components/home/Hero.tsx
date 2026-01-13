@@ -1,6 +1,7 @@
 import { Stethoscope } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import LanguageToggle from '@/components/ui/LanguageToggle';
+import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { t, Language } from '@/lib/translations';
 
 interface HeroProps {
@@ -25,11 +26,14 @@ const Hero = ({ language, onLanguageChange, isAuthenticated, onGetStarted }: Her
             </div>
             <span className="font-bold text-lg">{t('appName', language)}</span>
           </div>
-          <LanguageToggle 
-            language={language} 
-            onToggle={onLanguageChange}
-            className="bg-white/20"
-          />
+          <div className="flex items-center gap-2">
+            <ThemeToggle className="text-primary-foreground hover:bg-white/20" />
+            <LanguageToggle 
+              language={language} 
+              onToggle={onLanguageChange}
+              className="bg-white/20"
+            />
+          </div>
         </div>
 
         {/* Hero content */}
