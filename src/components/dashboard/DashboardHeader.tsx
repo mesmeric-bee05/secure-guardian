@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import LanguageToggle from '@/components/ui/LanguageToggle';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
+import NotificationToggle from '@/components/notifications/NotificationToggle';
 import { Language } from '@/lib/translations';
 
 interface DashboardHeaderProps {
@@ -46,6 +47,7 @@ const DashboardHeader = ({
           </div>
         </div>
         <div className="flex items-center gap-1">
+          <NotificationToggle language={language} />
           <ThemeToggle />
           <LanguageToggle language={language} onToggle={onLanguageChange} />
           <Button
