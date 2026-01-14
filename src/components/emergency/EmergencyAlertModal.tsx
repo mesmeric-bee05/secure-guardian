@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlertTriangle, MapPin, Loader2 } from 'lucide-react';
+import { AlertTriangle, MapPin, Loader2, WifiOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
+import { offlineStorage } from '@/lib/offlineStorage';
 import { toast } from 'sonner';
 import { t, Language } from '@/lib/translations';
 
@@ -47,6 +48,7 @@ const EmergencyAlertModal = ({
   const [symptoms, setSymptoms] = useState('');
   const [priority, setPriority] = useState<string>('high');
   const [sending, setSending] = useState(false);
+  const isOnline = navigator.onLine;
 
   const handleSend = async () => {
     if (!symptoms.trim()) {
@@ -55,6 +57,39 @@ const EmergencyAlertModal = ({
     }
 
     setSending(true);
+    
+    // If offline, save to IndexedDB for later sync
+    if (!isOnline) {
+      try {
+        await offlineStorage.saveEmergencyAlert({
+          symptoms,
+          priority,
+          latitude: userLocation?.lat || 0,
+          longitude: userLocation?.lng || 0,
+        });
+
+        toast.success(
+          language === 'en'
+            ? 'Alert saved offline. Will be sent when back online.'
+            : 'Tahadhari imehifadhiwa nje ya mtandao. Itatumwa unapoungana tena.'
+        );
+        onOpenChange(false);
+        setSymptoms('');
+        setPriority('high');
+      } catch (error) {
+        console.error('Error saving offline alert:', error);
+        toast.error(
+          language === 'en'
+            ? 'Failed to save alert. Please try again.'
+            : 'Imeshindikana kuhifadhi tahadhari. Tafadhali jaribu tena.'
+        );
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
+
+    // Online - send directly
     try {
       const { data: { session } } = await supabase.auth.getSession();
       
@@ -81,7 +116,38 @@ const EmergencyAlertModal = ({
       setPriority('high');
     } catch (error) {
       console.error('Emergency alert error:', error);
-      toast.error(language === 'en' ? 'Failed to send alert. Please try again.' : 'Imeshindikana kutuma tahadhari. Tafadhali jaribu tena.');
+      
+      // If network error, save offline
+      if (!navigator.onLine) {
+        try {
+          await offlineStorage.saveEmergencyAlert({
+            symptoms,
+            priority,
+            latitude: userLocation?.lat || 0,
+            longitude: userLocation?.lng || 0,
+          });
+          toast.info(
+            language === 'en'
+              ? 'Connection lost. Alert saved for later.'
+              : 'Muunganisho umepotea. Tahadhari imehifadhiwa kwa baadaye.'
+          );
+          onOpenChange(false);
+          setSymptoms('');
+          setPriority('high');
+        } catch (saveError) {
+          toast.error(
+            language === 'en'
+              ? 'Failed to send alert. Please try again.'
+              : 'Imeshindikana kutuma tahadhari. Tafadhali jaribu tena.'
+          );
+        }
+      } else {
+        toast.error(
+          language === 'en'
+            ? 'Failed to send alert. Please try again.'
+            : 'Imeshindikana kutuma tahadhari. Tafadhali jaribu tena.'
+        );
+      }
     } finally {
       setSending(false);
     }
@@ -101,6 +167,17 @@ const EmergencyAlertModal = ({
               : 'Eleza dharura yako. Hii itawasiliana na mawasiliano yako na wafanyakazi wa afya wa karibu.'}
           </DialogDescription>
         </DialogHeader>
+
+        {!isOnline && (
+          <div className="flex items-center gap-2 text-sm bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-lg p-3">
+            <WifiOff className="h-4 w-4 shrink-0" />
+            <span>
+              {language === 'en'
+                ? 'Offline mode - alert will be sent when back online'
+                : 'Hali ya nje ya mtandao - tahadhari itatumwa unapoungana tena'}
+            </span>
+          </div>
+        )}
 
         <div className="space-y-4 py-4">
           <div className="space-y-2">
@@ -146,7 +223,9 @@ const EmergencyAlertModal = ({
           </Button>
           <Button variant="destructive" onClick={handleSend} disabled={sending}>
             {sending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-            {language === 'en' ? 'Send Alert' : 'Tuma Tahadhari'}
+            {isOnline
+              ? (language === 'en' ? 'Send Alert' : 'Tuma Tahadhari')
+              : (language === 'en' ? 'Save Alert' : 'Hifadhi Tahadhari')}
           </Button>
         </DialogFooter>
       </DialogContent>

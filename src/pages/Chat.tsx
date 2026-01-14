@@ -31,10 +31,13 @@ const Chat = () => {
     isSpeaking,
     isSupported,
     transcript,
+    availableVoices,
+    selectedVoice,
     startListening,
     stopListening,
     speak,
     stopSpeaking,
+    selectVoice,
   } = useVoice({ language });
 
   // Update language when profile loads
@@ -69,6 +72,9 @@ const Chat = () => {
         language={language}
         onLanguageChange={handleLanguageChange}
         onNewChat={handleNewChat}
+        availableVoices={availableVoices}
+        selectedVoice={selectedVoice}
+        onSelectVoice={selectVoice}
       />
       
       <ChatMessageList
