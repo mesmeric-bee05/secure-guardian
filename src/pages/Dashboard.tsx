@@ -10,6 +10,7 @@ import PriorityDistributionChart from '@/components/dashboard/PriorityDistributi
 import ResponseTimeChart from '@/components/dashboard/ResponseTimeChart';
 import StatusOverviewChart from '@/components/dashboard/StatusOverviewChart';
 import { useAuth } from '@/hooks/useAuth';
+import { usePushNotifications } from '@/hooks/usePushNotifications';
 import { supabase } from '@/integrations/supabase/client';
 import { Language } from '@/lib/translations';
 import { toast } from 'sonner';
@@ -43,6 +44,7 @@ const Dashboard = () => {
   const [language, setLanguage] = useState<Language>(
     (profile?.preferred_language as Language) || 'en'
   );
+  const { showEmergencyAlert, isPermissionGranted } = usePushNotifications(language);
   const [cases, setCases] = useState<EmergencyCase[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -113,6 +115,15 @@ const Dashboard = () => {
                   ? 'New case received' 
                   : 'Kesi mpya imepokelewa'
               );
+              
+              // Send push notification for new cases
+              if (isPermissionGranted) {
+                showEmergencyAlert(
+                  newCase.symptoms,
+                  newCase.priority,
+                  newCase.id
+                );
+              }
             }
           } else if (payload.eventType === 'UPDATE') {
             const updatedCase = payload.new as EmergencyCase;
