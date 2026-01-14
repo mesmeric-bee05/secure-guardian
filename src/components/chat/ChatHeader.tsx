@@ -3,15 +3,32 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import LanguageToggle from '@/components/ui/LanguageToggle';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
+import VoiceSettings from './VoiceSettings';
 import { t, Language } from '@/lib/translations';
+
+interface VoiceOption {
+  voice: SpeechSynthesisVoice;
+  name: string;
+  lang: string;
+}
 
 interface ChatHeaderProps {
   language: Language;
   onLanguageChange: (lang: Language) => void;
   onNewChat: () => void;
+  availableVoices?: VoiceOption[];
+  selectedVoice?: { name: string; lang: string } | null;
+  onSelectVoice?: (voiceName: string) => void;
 }
 
-const ChatHeader = ({ language, onLanguageChange, onNewChat }: ChatHeaderProps) => {
+const ChatHeader = ({
+  language,
+  onLanguageChange,
+  onNewChat,
+  availableVoices = [],
+  selectedVoice,
+  onSelectVoice,
+}: ChatHeaderProps) => {
   const navigate = useNavigate();
 
   return (
@@ -37,6 +54,14 @@ const ChatHeader = ({ language, onLanguageChange, onNewChat }: ChatHeaderProps) 
           </div>
         </div>
         <div className="flex items-center gap-1">
+          {availableVoices.length > 0 && onSelectVoice && (
+            <VoiceSettings
+              language={language}
+              availableVoices={availableVoices}
+              selectedVoice={selectedVoice || null}
+              onSelectVoice={onSelectVoice}
+            />
+          )}
           <ThemeToggle />
           <LanguageToggle language={language} onToggle={onLanguageChange} />
           <Button

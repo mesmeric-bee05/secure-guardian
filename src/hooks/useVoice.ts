@@ -1,5 +1,11 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 
+interface VoiceOption {
+  voice: SpeechSynthesisVoice;
+  name: string;
+  lang: string;
+}
+
 interface UseVoiceOptions {
   language?: 'en' | 'sw';
   continuous?: boolean;
@@ -56,9 +62,58 @@ export function useVoice(options: UseVoiceOptions = {}) {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [isSupported, setIsSupported] = useState(false);
+  const [availableVoices, setAvailableVoices] = useState<VoiceOption[]>([]);
+  const [selectedVoice, setSelectedVoice] = useState<SpeechSynthesisVoice | null>(null);
   
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const synthRef = useRef<SpeechSynthesis | null>(null);
+
+  // Load available voices
+  const loadVoices = useCallback(() => {
+    if (!synthRef.current) return;
+    
+    const voices = synthRef.current.getVoices();
+    const langPrefix = language === 'sw' ? 'sw' : 'en';
+    
+    // Filter voices for the current language
+    const filteredVoices: VoiceOption[] = voices
+      .filter(voice => voice.lang.toLowerCase().startsWith(langPrefix))
+      .map(voice => ({
+        voice,
+        name: voice.name,
+        lang: voice.lang,
+      }));
+
+    // Also include some good fallback voices for Swahili (often not available natively)
+    if (language === 'sw' && filteredVoices.length === 0) {
+      // Use English voices as fallback for Swahili
+      const englishVoices = voices
+        .filter(voice => voice.lang.toLowerCase().startsWith('en'))
+        .slice(0, 3)
+        .map(voice => ({
+          voice,
+          name: `${voice.name} (Fallback)`,
+          lang: voice.lang,
+        }));
+      filteredVoices.push(...englishVoices);
+    }
+
+    setAvailableVoices(filteredVoices);
+    
+    // Auto-select best voice for the language
+    if (filteredVoices.length > 0 && !selectedVoice) {
+      // Prefer female voices for medical/assistant contexts
+      const femaleVoice = filteredVoices.find(v => 
+        v.name.toLowerCase().includes('female') || 
+        v.name.toLowerCase().includes('samantha') ||
+        v.name.toLowerCase().includes('victoria') ||
+        v.name.toLowerCase().includes('karen') ||
+        v.name.toLowerCase().includes('moira')
+      );
+      
+      setSelectedVoice(femaleVoice?.voice || filteredVoices[0].voice);
+    }
+  }, [language, selectedVoice]);
 
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -103,12 +158,28 @@ export function useVoice(options: UseVoiceOptions = {}) {
     }
 
     synthRef.current = window.speechSynthesis;
+    
+    // Load voices
+    loadVoices();
+    
+    // Voices may load asynchronously
+    if (synthRef.current) {
+      synthRef.current.onvoiceschanged = loadVoices;
+    }
 
     return () => {
       recognitionRef.current?.abort();
       synthRef.current?.cancel();
     };
-  }, [language, continuous, onResult, onError]);
+  }, [language, continuous, onResult, onError, loadVoices]);
+
+  // Update recognition language when language changes
+  useEffect(() => {
+    if (recognitionRef.current) {
+      recognitionRef.current.lang = language === 'sw' ? 'sw-KE' : 'en-US';
+    }
+    loadVoices();
+  }, [language, loadVoices]);
 
   const startListening = useCallback(() => {
     if (!recognitionRef.current) {
@@ -144,6 +215,12 @@ export function useVoice(options: UseVoiceOptions = {}) {
     synthRef.current.cancel();
 
     const utterance = new SpeechSynthesisUtterance(text);
+    
+    // Use selected voice or default
+    if (selectedVoice) {
+      utterance.voice = selectedVoice;
+    }
+    
     utterance.lang = language === 'sw' ? 'sw-KE' : 'en-US';
     utterance.rate = 0.9;
     utterance.pitch = 1;
@@ -159,21 +236,34 @@ export function useVoice(options: UseVoiceOptions = {}) {
     };
 
     synthRef.current.speak(utterance);
-  }, [language, onError]);
+  }, [language, selectedVoice, onError]);
 
   const stopSpeaking = useCallback(() => {
     synthRef.current?.cancel();
     setIsSpeaking(false);
   }, []);
 
+  const selectVoice = useCallback((voiceName: string) => {
+    const voice = availableVoices.find(v => v.name === voiceName);
+    if (voice) {
+      setSelectedVoice(voice.voice);
+    }
+  }, [availableVoices]);
+
   return {
     isSupported,
     isListening,
     isSpeaking,
     transcript,
+    availableVoices,
+    selectedVoice: selectedVoice ? {
+      name: selectedVoice.name,
+      lang: selectedVoice.lang,
+    } : null,
     startListening,
     stopListening,
     speak,
     stopSpeaking,
+    selectVoice,
   };
 }

@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { useFacilities, HealthFacility } from '@/hooks/useFacilities';
 import { useGeolocation } from '@/hooks/useGeolocation';
 import { useAuth } from '@/hooks/useAuth';
+import { useBackgroundSync } from '@/hooks/useBackgroundSync';
 import EmergencyHeader from '@/components/emergency/EmergencyHeader';
 import EmergencyMap from '@/components/emergency/EmergencyMap';
 import FacilityList from '@/components/emergency/FacilityList';
@@ -29,6 +30,9 @@ const Emergency = () => {
     error: locationError,
     getCurrentPosition,
   } = useGeolocation();
+  
+  // Enable background sync for offline alerts
+  useBackgroundSync({ language });
 
   const userLocation = latitude && longitude ? { lat: latitude, lng: longitude } : null;
 
