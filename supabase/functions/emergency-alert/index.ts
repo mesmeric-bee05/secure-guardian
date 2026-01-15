@@ -6,12 +6,105 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-interface EmergencyAlertRequest {
-  symptoms: string;
-  latitude?: number;
-  longitude?: number;
-  address?: string;
-  priority?: 'low' | 'medium' | 'high' | 'critical';
+// Rate limiting (in-memory, per function instance)
+const rateLimiter = new Map<string, { count: number; resetAt: number }>();
+
+function checkRateLimit(userId: string, limit = 5, windowMs = 60000): boolean {
+  const now = Date.now();
+  const record = rateLimiter.get(userId);
+  
+  if (!record || record.resetAt < now) {
+    rateLimiter.set(userId, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+  
+  if (record.count >= limit) {
+    return false;
+  }
+  
+  record.count++;
+  return true;
+}
+
+// Input validation
+function validateEmergencyInput(data: unknown): { 
+  valid: boolean; 
+  error?: string; 
+  parsed?: { 
+    symptoms: string; 
+    latitude?: number; 
+    longitude?: number; 
+    address?: string; 
+    priority: 'low' | 'medium' | 'high' | 'critical';
+  } 
+} {
+  if (!data || typeof data !== 'object') {
+    return { valid: false, error: 'Invalid request body' };
+  }
+
+  const body = data as Record<string, unknown>;
+  
+  // Validate symptoms (required)
+  if (typeof body.symptoms !== 'string') {
+    return { valid: false, error: 'Symptoms must be a string' };
+  }
+  
+  const symptoms = body.symptoms.trim();
+  if (symptoms.length < 5) {
+    return { valid: false, error: 'Symptoms description too short (min 5 characters)' };
+  }
+  
+  if (symptoms.length > 1000) {
+    return { valid: false, error: 'Symptoms description too long (max 1000 characters)' };
+  }
+  
+  // Validate latitude (optional)
+  let latitude: number | undefined;
+  if (body.latitude !== undefined) {
+    if (typeof body.latitude !== 'number' || isNaN(body.latitude)) {
+      return { valid: false, error: 'Latitude must be a valid number' };
+    }
+    if (body.latitude < -90 || body.latitude > 90) {
+      return { valid: false, error: 'Latitude must be between -90 and 90' };
+    }
+    latitude = body.latitude;
+  }
+  
+  // Validate longitude (optional)
+  let longitude: number | undefined;
+  if (body.longitude !== undefined) {
+    if (typeof body.longitude !== 'number' || isNaN(body.longitude)) {
+      return { valid: false, error: 'Longitude must be a valid number' };
+    }
+    if (body.longitude < -180 || body.longitude > 180) {
+      return { valid: false, error: 'Longitude must be between -180 and 180' };
+    }
+    longitude = body.longitude;
+  }
+  
+  // Validate address (optional)
+  let address: string | undefined;
+  if (body.address !== undefined) {
+    if (typeof body.address !== 'string') {
+      return { valid: false, error: 'Address must be a string' };
+    }
+    if (body.address.length > 500) {
+      return { valid: false, error: 'Address too long (max 500 characters)' };
+    }
+    address = body.address.trim();
+  }
+  
+  // Validate priority (optional, default to 'high')
+  const validPriorities = ['low', 'medium', 'high', 'critical'];
+  let priority: 'low' | 'medium' | 'high' | 'critical' = 'high';
+  if (body.priority !== undefined) {
+    if (typeof body.priority !== 'string' || !validPriorities.includes(body.priority)) {
+      return { valid: false, error: 'Priority must be one of: low, medium, high, critical' };
+    }
+    priority = body.priority as 'low' | 'medium' | 'high' | 'critical';
+  }
+  
+  return { valid: true, parsed: { symptoms, latitude, longitude, address, priority } };
 }
 
 serve(async (req) => {
@@ -49,19 +142,33 @@ serve(async (req) => {
       );
     }
 
-    const userId = claims.claims.sub;
+    const userId = claims.claims.sub as string;
+
+    // Rate limiting (stricter for emergency alerts to prevent abuse)
+    if (!checkRateLimit(userId, 5, 60000)) {
+      return new Response(
+        JSON.stringify({ error: 'Rate limit exceeded. Please wait a moment and try again.' }),
+        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    const { symptoms, latitude, longitude, address, priority = 'high' }: EmergencyAlertRequest = await req.json();
-
-    if (!symptoms) {
+    // Parse and validate input
+    const rawBody = await req.json();
+    const validation = validateEmergencyInput(rawBody);
+    
+    if (!validation.valid || !validation.parsed) {
       return new Response(
-        JSON.stringify({ error: 'Symptoms description is required' }),
+        JSON.stringify({ error: validation.error || 'Invalid input' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    console.log('Emergency alert:', { userId, symptoms, priority, latitude, longitude });
+    const { symptoms, latitude, longitude, address, priority } = validation.parsed;
+
+    // Log minimal metadata (no PII)
+    console.log('Emergency alert:', { userId: userId.slice(0, 8) + '...', priority, hasLocation: !!(latitude && longitude) });
 
     // Create emergency case
     const { data: emergencyCase, error: caseError } = await supabase
@@ -79,7 +186,7 @@ serve(async (req) => {
       .single();
 
     if (caseError) {
-      console.error('Error creating emergency case:', caseError);
+      console.error('Error creating emergency case:', caseError.message);
       throw new Error('Failed to create emergency case');
     }
 
@@ -101,14 +208,14 @@ serve(async (req) => {
       action: 'emergency_alert_created',
       resource_type: 'emergency_cases',
       resource_id: emergencyCase.id,
-      details: { symptoms, priority, location: { latitude, longitude } },
+      details: { priority, hasLocation: !!(latitude && longitude) },
     });
 
     // Send SMS to emergency contacts if configured
     if (AFRICAS_TALKING_API_KEY && AFRICAS_TALKING_USERNAME && contacts?.length) {
-      const locationText = address || (latitude && longitude ? `${latitude}, ${longitude}` : 'Unknown');
+      const locationText = address || (latitude && longitude ? `${latitude.toFixed(4)}, ${longitude.toFixed(4)}` : 'Unknown');
       const message = `EMERGENCY ALERT from ${profile?.full_name || 'MediReach+ User'}!
-Symptoms: ${symptoms}
+Symptoms: ${symptoms.slice(0, 100)}${symptoms.length > 100 ? '...' : ''}
 Location: ${locationText}
 Please check on them immediately or call 999.`;
 
@@ -134,18 +241,18 @@ Please check on them immediately or call 999.`;
               }),
             });
 
-            // Log SMS
+            // Log SMS (truncated message for privacy)
             await supabase.from('sms_logs').insert({
               user_id: userId,
               phone_number: formattedPhone,
-              message,
+              message: 'Emergency alert notification',
               direction: 'outbound',
               status: 'sent',
             });
 
-            console.log('Emergency SMS sent to:', contact.name);
+            console.log('Emergency SMS sent');
           } catch (smsError) {
-            console.error('SMS error:', smsError);
+            console.error('SMS error');
           }
         }
       }
@@ -176,7 +283,7 @@ Please check on them immediately or call 999.`;
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (error) {
-    console.error('Emergency alert error:', error);
+    console.error('Emergency alert error:', error instanceof Error ? error.message : 'Unknown');
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

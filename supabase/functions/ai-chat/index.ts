@@ -1,9 +1,82 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
+
+// Rate limiting (in-memory, per function instance)
+const rateLimiter = new Map<string, { count: number; resetAt: number }>();
+
+function checkRateLimit(userId: string, limit = 30, windowMs = 60000): boolean {
+  const now = Date.now();
+  const record = rateLimiter.get(userId);
+  
+  if (!record || record.resetAt < now) {
+    rateLimiter.set(userId, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+  
+  if (record.count >= limit) {
+    return false;
+  }
+  
+  record.count++;
+  return true;
+}
+
+// Input validation schema (manual implementation for Deno)
+function validateChatInput(data: unknown): { valid: boolean; error?: string; parsed?: { messages: Array<{ role: string; content: string }>; language: string } } {
+  if (!data || typeof data !== 'object') {
+    return { valid: false, error: 'Invalid request body' };
+  }
+
+  const body = data as Record<string, unknown>;
+  
+  // Validate messages array
+  if (!Array.isArray(body.messages)) {
+    return { valid: false, error: 'Messages must be an array' };
+  }
+  
+  if (body.messages.length === 0) {
+    return { valid: false, error: 'Messages array cannot be empty' };
+  }
+  
+  if (body.messages.length > 50) {
+    return { valid: false, error: 'Too many messages (max 50)' };
+  }
+  
+  for (const msg of body.messages) {
+    if (!msg || typeof msg !== 'object') {
+      return { valid: false, error: 'Invalid message format' };
+    }
+    const m = msg as Record<string, unknown>;
+    if (m.role !== 'user' && m.role !== 'assistant') {
+      return { valid: false, error: 'Invalid message role' };
+    }
+    if (typeof m.content !== 'string') {
+      return { valid: false, error: 'Message content must be a string' };
+    }
+    if (m.content.length > 4000) {
+      return { valid: false, error: 'Message content too long (max 4000 chars)' };
+    }
+  }
+  
+  // Validate language
+  const language = body.language as string || 'en';
+  if (language !== 'en' && language !== 'sw') {
+    return { valid: false, error: 'Language must be "en" or "sw"' };
+  }
+  
+  return { 
+    valid: true, 
+    parsed: { 
+      messages: body.messages as Array<{ role: string; content: string }>,
+      language 
+    } 
+  };
+}
 
 const SYSTEM_PROMPT_EN = `You are MediReach+ AI, a compassionate and knowledgeable first aid assistant. Your role is to provide clear, actionable first aid guidance for common medical emergencies.
 
@@ -63,16 +136,63 @@ serve(async (req) => {
   }
 
   try {
-    const { messages, language = 'en' } = await req.json();
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+    const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
+    const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
     
     if (!LOVABLE_API_KEY) {
       throw new Error('LOVABLE_API_KEY is not configured');
     }
 
+    // Validate authentication
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader?.startsWith('Bearer ')) {
+      return new Response(
+        JSON.stringify({ error: 'Unauthorized - Missing or invalid authorization header' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const supabaseAuth = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: authHeader } }
+    });
+
+    const token = authHeader.replace('Bearer ', '');
+    const { data: claims, error: claimsError } = await supabaseAuth.auth.getClaims(token);
+    
+    if (claimsError || !claims?.claims) {
+      return new Response(
+        JSON.stringify({ error: 'Unauthorized - Invalid token' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const userId = claims.claims.sub as string;
+
+    // Rate limiting
+    if (!checkRateLimit(userId)) {
+      return new Response(
+        JSON.stringify({ error: 'Rate limit exceeded. Please wait a moment and try again.' }),
+        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Parse and validate input
+    const rawBody = await req.json();
+    const validation = validateChatInput(rawBody);
+    
+    if (!validation.valid || !validation.parsed) {
+      return new Response(
+        JSON.stringify({ error: validation.error || 'Invalid input' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const { messages, language } = validation.parsed;
     const systemPrompt = language === 'sw' ? SYSTEM_PROMPT_SW : SYSTEM_PROMPT_EN;
 
-    console.log('AI Chat request:', { messageCount: messages?.length, language });
+    // Log minimal metadata (no sensitive content)
+    console.log('AI Chat request:', { userId: userId.slice(0, 8) + '...', messageCount: messages.length, language });
 
     const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
@@ -92,7 +212,7 @@ serve(async (req) => {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('AI gateway error:', response.status, errorText);
+      console.error('AI gateway error:', response.status);
       
       if (response.status === 429) {
         return new Response(
@@ -115,7 +235,7 @@ serve(async (req) => {
       headers: { ...corsHeaders, 'Content-Type': 'text/event-stream' },
     });
   } catch (error) {
-    console.error('AI chat error:', error);
+    console.error('AI chat error:', error instanceof Error ? error.message : 'Unknown');
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
