@@ -1,4 +1,6 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from './useAuth';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -7,14 +9,115 @@ interface Message {
 
 interface UseChatOptions {
   language?: 'en' | 'sw';
+  sessionId?: string | null;
   onError?: (error: string) => void;
+  onSessionCreated?: (sessionId: string) => void;
+  onTitleGenerated?: (title: string) => void;
 }
 
 export function useChat(options: UseChatOptions = {}) {
-  const { language = 'en', onError } = options;
+  const { language = 'en', sessionId, onError, onSessionCreated, onTitleGenerated } = options;
+  const { user } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const currentSessionIdRef = useRef<string | null>(sessionId || null);
+  const hasGeneratedTitle = useRef(false);
+
+  // Load messages when sessionId changes
+  useEffect(() => {
+    currentSessionIdRef.current = sessionId || null;
+    hasGeneratedTitle.current = false;
+    
+    if (sessionId && user) {
+      loadMessages(sessionId);
+    } else {
+      setMessages([]);
+    }
+  }, [sessionId, user]);
+
+  const loadMessages = async (sid: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('chat_messages')
+        .select('*')
+        .eq('session_id', sid)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+      
+      setMessages((data || []).map(m => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+      })));
+    } catch (err) {
+      console.error('Failed to load messages:', err);
+    }
+  };
+
+  const ensureSession = async (): Promise<string | null> => {
+    if (currentSessionIdRef.current) return currentSessionIdRef.current;
+    if (!user) return null;
+
+    try {
+      const { data, error } = await supabase
+        .from('chat_sessions')
+        .insert({
+          user_id: user.id,
+          language,
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      
+      currentSessionIdRef.current = data.id;
+      onSessionCreated?.(data.id);
+      return data.id;
+    } catch (err) {
+      console.error('Failed to create session:', err);
+      return null;
+    }
+  };
+
+  const saveMessage = async (sid: string, role: 'user' | 'assistant', content: string) => {
+    try {
+      await supabase.from('chat_messages').insert({
+        session_id: sid,
+        role,
+        content,
+      });
+
+      await supabase
+        .from('chat_sessions')
+        .update({ updated_at: new Date().toISOString() })
+        .eq('id', sid);
+    } catch (err) {
+      console.error('Failed to save message:', err);
+    }
+  };
+
+  const generateTitle = async (sid: string, firstMessage: string) => {
+    if (hasGeneratedTitle.current) return;
+    hasGeneratedTitle.current = true;
+
+    const title = firstMessage
+      .replace(/\n/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 50) + (firstMessage.length > 50 ? '...' : '');
+
+    try {
+      await supabase
+        .from('chat_sessions')
+        .update({ title })
+        .eq('id', sid);
+      
+      onTitleGenerated?.(title);
+    } catch (err) {
+      console.error('Failed to update title:', err);
+    }
+  };
 
   const sendMessage = useCallback(async (input: string) => {
     if (!input.trim()) return;
@@ -23,17 +126,33 @@ export function useChat(options: UseChatOptions = {}) {
     setMessages(prev => [...prev, userMessage]);
     setIsLoading(true);
 
+    // Ensure we have a session
+    const sid = await ensureSession();
+
+    // Save user message if we have a session
+    if (sid) {
+      await saveMessage(sid, 'user', input);
+      
+      // Generate title from first message
+      if (messages.length === 0) {
+        generateTitle(sid, input);
+      }
+    }
+
     abortControllerRef.current = new AbortController();
     let assistantContent = '';
 
     try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-chat`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+            'Authorization': `Bearer ${accessToken || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
           },
           body: JSON.stringify({
             messages: [...messages, userMessage].map(m => ({
@@ -122,6 +241,11 @@ export function useChat(options: UseChatOptions = {}) {
           } catch { /* ignore */ }
         }
       }
+
+      // Save assistant response if we have a session
+      if (sid && assistantContent) {
+        await saveMessage(sid, 'assistant', assistantContent);
+      }
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         return;
@@ -141,7 +265,7 @@ export function useChat(options: UseChatOptions = {}) {
       setIsLoading(false);
       abortControllerRef.current = null;
     }
-  }, [messages, language, onError]);
+  }, [messages, language, onError, user]);
 
   const stopGeneration = useCallback(() => {
     abortControllerRef.current?.abort();
@@ -150,6 +274,8 @@ export function useChat(options: UseChatOptions = {}) {
 
   const clearMessages = useCallback(() => {
     setMessages([]);
+    currentSessionIdRef.current = null;
+    hasGeneratedTitle.current = false;
   }, []);
 
   return {
@@ -158,5 +284,6 @@ export function useChat(options: UseChatOptions = {}) {
     sendMessage,
     stopGeneration,
     clearMessages,
+    setMessages,
   };
 }

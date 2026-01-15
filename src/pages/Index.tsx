@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import Hero from '@/components/home/Hero';
 import QuickActions from '@/components/home/QuickActions';
 import FeatureCards from '@/components/home/FeatureCards';
+import FirstAidProtocols from '@/components/home/FirstAidProtocols';
 import { useAuth } from '@/hooks/useAuth';
 import { Language } from '@/lib/translations';
 
@@ -39,6 +40,8 @@ const Index = () => {
         isChw={isChw()}
         isAdmin={isAdmin()}
       />
+
+      <FirstAidProtocols language={language} />
       
       <FeatureCards language={language} />
       
