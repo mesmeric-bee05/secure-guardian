@@ -7,6 +7,26 @@ const corsHeaders = {
   'Content-Type': 'text/plain',
 };
 
+// Input sanitization to prevent injection attacks
+function sanitizeInput(input: string): string {
+  if (!input || typeof input !== 'string') return '';
+  // Remove any potentially harmful characters, keep only digits, asterisks, and hashes
+  return input.replace(/[^0-9*#]/g, '').slice(0, 100);
+}
+
+function sanitizePhoneNumber(phone: string): string {
+  if (!phone || typeof phone !== 'string') return '';
+  // Keep only digits and + sign at the start
+  const cleaned = phone.replace(/[^0-9+]/g, '');
+  return cleaned.slice(0, 20);
+}
+
+function sanitizeSessionId(sessionId: string): string {
+  if (!sessionId || typeof sessionId !== 'string') return '';
+  // Allow alphanumeric, hyphens, and underscores only
+  return sessionId.replace(/[^a-zA-Z0-9\-_]/g, '').slice(0, 100);
+}
+
 // USSD Menu structure
 const MENUS = {
   main: {
@@ -144,11 +164,21 @@ serve(async (req) => {
 
     // Parse form data from Africa's Talking
     const formData = await req.formData();
-    const sessionId = formData.get('sessionId') as string;
-    const phoneNumber = formData.get('phoneNumber') as string;
-    const text = formData.get('text') as string || '';
+    const rawSessionId = formData.get('sessionId') as string;
+    const rawPhoneNumber = formData.get('phoneNumber') as string;
+    const rawText = formData.get('text') as string || '';
 
-    console.log('USSD request:', { sessionId, phoneNumber, text });
+    // Sanitize all inputs
+    const sessionId = sanitizeSessionId(rawSessionId);
+    const phoneNumber = sanitizePhoneNumber(rawPhoneNumber);
+    const text = sanitizeInput(rawText);
+
+    if (!sessionId || !phoneNumber) {
+      return new Response('END Invalid request.', { headers: corsHeaders });
+    }
+
+    // Log minimal metadata
+    console.log('USSD request:', { sessionId: sessionId.slice(0, 8) + '...', inputLength: text.length });
 
     // Get or create session
     let { data: session } = await supabase
@@ -171,7 +201,7 @@ serve(async (req) => {
       session = newSession;
     }
 
-    const language = session?.session_data?.language || 'en';
+    const language = (session?.session_data?.language as 'en' | 'sw') || 'en';
     const inputs = text.split('*');
     const lastInput = inputs[inputs.length - 1];
 
@@ -180,7 +210,7 @@ serve(async (req) => {
     // Handle menu navigation
     if (text === '' || text === '0*0') {
       // Show main menu
-      response = MENUS.main[language as 'en' | 'sw'];
+      response = MENUS.main[language];
     } else if (text === '0') {
       // Language selection
       response = MENUS.language.text;
@@ -195,7 +225,7 @@ serve(async (req) => {
     } else if (inputs[0] === '1') {
       // First Aid menu
       if (inputs.length === 1) {
-        response = MENUS.firstAid[language as 'en' | 'sw'];
+        response = MENUS.firstAid[language];
       } else {
         // Show specific first aid tip
         const tipMap: Record<string, string> = {
@@ -207,11 +237,11 @@ serve(async (req) => {
         };
         const tipKey = tipMap[lastInput];
         if (tipKey && FIRST_AID_TIPS[tipKey]) {
-          response = FIRST_AID_TIPS[tipKey][language as 'en' | 'sw'];
+          response = FIRST_AID_TIPS[tipKey][language];
         } else if (lastInput === '0') {
-          response = MENUS.main[language as 'en' | 'sw'];
+          response = MENUS.main[language];
         } else {
-          response = MENUS.firstAid[language as 'en' | 'sw'];
+          response = MENUS.firstAid[language];
         }
       }
     } else if (inputs[0] === '2') {
@@ -264,7 +294,7 @@ Kusasisha wasifu wako, tumia programu ya MediReach+ au tuma SMS kwa nambari yetu
 
 Kwa dharura, wasifu wako husaidia wahudumu.`;
     } else {
-      response = MENUS.main[language as 'en' | 'sw'];
+      response = MENUS.main[language];
     }
 
     // Update session
@@ -275,7 +305,7 @@ Kwa dharura, wasifu wako husaidia wahudumu.`;
 
     return new Response(response, { headers: corsHeaders });
   } catch (error) {
-    console.error('USSD handler error:', error);
+    console.error('USSD handler error:', error instanceof Error ? error.message : 'Unknown');
     return new Response(
       'END An error occurred. Please try again.',
       { headers: corsHeaders }
