@@ -9,8 +9,9 @@ import CaseTrendsChart from '@/components/dashboard/CaseTrendsChart';
 import PriorityDistributionChart from '@/components/dashboard/PriorityDistributionChart';
 import ResponseTimeChart from '@/components/dashboard/ResponseTimeChart';
 import StatusOverviewChart from '@/components/dashboard/StatusOverviewChart';
+import RealtimeStatus from '@/components/dashboard/RealtimeStatus';
 import { useAuth } from '@/hooks/useAuth';
-import { usePushNotifications } from '@/hooks/usePushNotifications';
+import { useRealtimeCases } from '@/hooks/useRealtimeCases';
 import { supabase } from '@/integrations/supabase/client';
 import { Language } from '@/lib/translations';
 import { toast } from 'sonner';
@@ -44,39 +45,24 @@ const Dashboard = () => {
   const [language, setLanguage] = useState<Language>(
     (profile?.preferred_language as Language) || 'en'
   );
-  const { showEmergencyAlert, isPermissionGranted } = usePushNotifications(language);
-  const [cases, setCases] = useState<EmergencyCase[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedCase, setSelectedCase] = useState<EmergencyCase | null>(null);
   const [showCaseModal, setShowCaseModal] = useState(false);
 
-  const fetchCases = useCallback(async () => {
-    if (!user) return;
-
-    try {
-      // For CHWs, get cases assigned to them; for admins, get all cases
-      let query = supabase
-        .from('emergency_cases')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (isChw() && !isAdmin()) {
-        query = query.eq('assigned_chw_id', user.id);
-      }
-
-      const { data, error } = await query;
-
-      if (error) throw error;
-      setCases(data as EmergencyCase[] || []);
-    } catch (error) {
-      console.error('Error fetching cases:', error);
-      toast.error(language === 'en' ? 'Failed to load cases' : 'Imeshindikana kupakia kesi');
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [user, isChw, isAdmin, language]);
+  // Use realtime cases hook
+  const {
+    assignedCases,
+    isConnected,
+    isNotificationsEnabled,
+    enableNotifications,
+    refreshCases,
+  } = useRealtimeCases({
+    language,
+    onCaseAssigned: (caseData) => {
+      console.log('Case assigned to CHW:', caseData.id);
+    },
+  });
 
   useEffect(() => {
     if (!authLoading && !isChw() && !isAdmin()) {
@@ -85,63 +71,9 @@ const Dashboard = () => {
     }
     
     if (user) {
-      fetchCases();
+      setLoading(false);
     }
-  }, [user, authLoading, isChw, isAdmin, navigate, fetchCases]);
-
-  // Real-time subscription for case updates
-  useEffect(() => {
-    if (!user) return;
-
-    const channel = supabase
-      .channel('emergency-cases-realtime')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'emergency_cases',
-        },
-        (payload) => {
-          console.log('Real-time update:', payload);
-          
-          if (payload.eventType === 'INSERT') {
-            const newCase = payload.new as EmergencyCase;
-            // Only add if it's for this CHW or user is admin
-            if (isAdmin() || newCase.assigned_chw_id === user.id) {
-              setCases(prev => [newCase, ...prev]);
-              toast.info(
-                language === 'en' 
-                  ? 'New case received' 
-                  : 'Kesi mpya imepokelewa'
-              );
-              
-              // Send push notification for new cases
-              if (isPermissionGranted) {
-                showEmergencyAlert(
-                  newCase.symptoms,
-                  newCase.priority,
-                  newCase.id
-                );
-              }
-            }
-          } else if (payload.eventType === 'UPDATE') {
-            const updatedCase = payload.new as EmergencyCase;
-            setCases(prev => 
-              prev.map(c => c.id === updatedCase.id ? updatedCase : c)
-            );
-          } else if (payload.eventType === 'DELETE') {
-            const deletedId = payload.old.id;
-            setCases(prev => prev.filter(c => c.id !== deletedId));
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user, isAdmin, language]);
+  }, [user, authLoading, isChw, isAdmin, navigate]);
 
   useEffect(() => {
     if (profile?.preferred_language) {
@@ -149,9 +81,10 @@ const Dashboard = () => {
     }
   }, [profile?.preferred_language]);
 
-  const handleRefresh = () => {
+  const handleRefresh = async () => {
     setRefreshing(true);
-    fetchCases();
+    await refreshCases();
+    setRefreshing(false);
   };
 
   const handleCaseSelect = (caseItem: EmergencyCase) => {
@@ -178,12 +111,10 @@ const Dashboard = () => {
 
       if (error) throw error;
 
-      // Update local state
-      setCases(prev => prev.map(c => 
-        c.id === id ? { ...c, ...updates } as EmergencyCase : c
-      ));
-
       toast.success(language === 'en' ? 'Case updated' : 'Kesi imesasishwa');
+      
+      // Refresh to get latest data
+      await refreshCases();
     } catch (error) {
       console.error('Error updating case:', error);
       toast.error(language === 'en' ? 'Failed to update case' : 'Imeshindikana kusasisha kesi');
@@ -191,7 +122,7 @@ const Dashboard = () => {
     }
   };
 
-  if (authLoading) {
+  if (authLoading || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -199,7 +130,8 @@ const Dashboard = () => {
     );
   }
 
-  // Calculate stats
+  // Calculate stats from realtime cases
+  const cases = assignedCases as EmergencyCase[];
   const today = new Date().toDateString();
   const stats = {
     total: cases.length,
@@ -220,6 +152,19 @@ const Dashboard = () => {
         onRefresh={handleRefresh}
         refreshing={refreshing}
       />
+
+      {/* Realtime Status Bar */}
+      <div className="px-4 py-2 border-b flex items-center justify-between bg-muted/30">
+        <span className="text-sm text-muted-foreground">
+          {language === 'en' ? 'Real-time updates' : 'Masasisho ya wakati halisi'}
+        </span>
+        <RealtimeStatus
+          isConnected={isConnected}
+          isNotificationsEnabled={isNotificationsEnabled}
+          onEnableNotifications={enableNotifications}
+          language={language}
+        />
+      </div>
 
       <StatsCards
         language={language}
