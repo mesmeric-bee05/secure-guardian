@@ -151,7 +151,10 @@ serve(async (req) => {
     // Log minimal metadata (no phone numbers or message content)
     console.log('SMS request:', { userId: userId.slice(0, 8) + '...', recipientCount: formattedRecipients.length });
 
-    // Africa's Talking API call
+    // Build SMS request with delivery callback
+    const callbackUrl = `${SUPABASE_URL}/functions/v1/sms-webhook`;
+    
+    // Africa's Talking API call with delivery callback
     const atResponse = await fetch('https://api.africastalking.com/version1/messaging', {
       method: 'POST',
       headers: {
@@ -164,8 +167,11 @@ serve(async (req) => {
         to: formattedRecipients.join(','),
         message: message,
         from: 'MediReach',
+        callback: callbackUrl,
       }),
     });
+    
+    console.log('SMS sent with delivery callback:', callbackUrl);
 
     const atResult = await atResponse.json();
 
