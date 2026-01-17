@@ -35,3 +35,6 @@ verify_jwt = false
 
 [functions.emergency-alert]
 verify_jwt = false
+
+[functions.sms-webhook]
+verify_jwt = false

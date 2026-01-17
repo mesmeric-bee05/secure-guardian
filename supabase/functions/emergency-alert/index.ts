@@ -258,19 +258,68 @@ Please check on them immediately or call 999.`;
       }
     }
 
-    // Find nearby CHWs (simplified - in production, use geospatial queries)
-    const { data: chws } = await supabase
-      .from('chw_assignments')
-      .select('chw_user_id')
-      .eq('is_active', true)
-      .limit(5);
-
-    if (chws?.length) {
-      // Notify first available CHW
-      await supabase
+    // Find nearest CHW using location-based assignment
+    let assignedChw: { chw_user_id: string; distance_km: number; region: string; city: string } | null = null;
+    
+    if (latitude && longitude) {
+      // Use the Haversine-based function to find nearest CHW
+      const { data: nearbyChws, error: chwError } = await supabase
+        .rpc('find_nearest_chw', {
+          emergency_lat: latitude,
+          emergency_lng: longitude,
+          max_distance_km: 50
+        });
+      
+      if (chwError) {
+        console.error('Error finding nearest CHW:', chwError.message);
+      } else if (nearbyChws && nearbyChws.length > 0) {
+        const nearestChw = nearbyChws[0];
+        assignedChw = nearestChw;
+        console.log('Found nearest CHW:', {
+          distance: nearestChw.distance_km.toFixed(2) + ' km',
+          region: nearestChw.region,
+          city: nearestChw.city,
+        });
+      }
+    }
+    
+    // Fallback to any active CHW if no location-based match
+    if (!assignedChw) {
+      const { data: fallbackChws } = await supabase
+        .from('chw_assignments')
+        .select('chw_user_id, region, city')
+        .eq('is_active', true)
+        .limit(1);
+      
+      if (fallbackChws?.length) {
+        assignedChw = { 
+          chw_user_id: fallbackChws[0].chw_user_id, 
+          distance_km: -1, // Unknown distance
+          region: fallbackChws[0].region,
+          city: fallbackChws[0].city
+        };
+        console.log('Using fallback CHW (no location match):', assignedChw.region);
+      }
+    }
+    
+    // Assign CHW to case
+    if (assignedChw) {
+      const { error: assignError } = await supabase
         .from('emergency_cases')
-        .update({ assigned_chw_id: chws[0].chw_user_id, status: 'assigned' })
+        .update({ 
+          assigned_chw_id: assignedChw.chw_user_id, 
+          status: 'assigned',
+          notes: assignedChw.distance_km >= 0 
+            ? `CHW assigned from ${assignedChw.city}, ${assignedChw.region} (${assignedChw.distance_km.toFixed(1)} km away)`
+            : `CHW assigned from ${assignedChw.city}, ${assignedChw.region} (fallback assignment)`
+        })
         .eq('id', emergencyCase.id);
+      
+      if (assignError) {
+        console.error('Error assigning CHW:', assignError.message);
+      }
+    } else {
+      console.warn('No CHW available for assignment');
     }
 
     return new Response(
