@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Locate, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useFacilities, HealthFacility } from '@/hooks/useFacilities';
@@ -11,6 +11,7 @@ import FacilityList from '@/components/emergency/FacilityList';
 import QuickDialButtons from '@/components/emergency/QuickDialButtons';
 import EmergencyAlertButton from '@/components/emergency/EmergencyAlertButton';
 import EmergencyAlertModal from '@/components/emergency/EmergencyAlertModal';
+import VoiceEmergencyButton from '@/components/emergency/VoiceEmergencyButton';
 import { Language } from '@/lib/translations';
 
 const Emergency = () => {
@@ -21,6 +22,8 @@ const Emergency = () => {
   const [selectedFacility, setSelectedFacility] = useState<HealthFacility | null>(null);
   const [showAlertModal, setShowAlertModal] = useState(false);
   const [viewMode, setViewMode] = useState<'map' | 'list'>('list');
+  const [voiceSymptoms, setVoiceSymptoms] = useState('');
+  const [voicePriority, setVoicePriority] = useState('');
 
   const { facilities, loading: facilitiesLoading } = useFacilities();
   const {
@@ -52,6 +55,13 @@ const Emergency = () => {
     getCurrentPosition();
   };
 
+  // Handle voice emergency detection
+  const handleVoiceEmergency = useCallback((symptoms: string, priority: string) => {
+    setVoiceSymptoms(symptoms);
+    setVoicePriority(priority);
+    setShowAlertModal(true);
+  }, []);
+
   return (
     <div className="flex flex-col h-screen bg-background">
       <EmergencyHeader
@@ -59,11 +69,16 @@ const Emergency = () => {
         onLanguageChange={setLanguage}
       />
 
-      {/* Emergency Alert Button */}
-      <div className="p-4 border-b">
+      {/* Emergency Alert Buttons */}
+      <div className="p-4 border-b space-y-3">
         <EmergencyAlertButton
           language={language}
           onClick={() => setShowAlertModal(true)}
+        />
+        <VoiceEmergencyButton
+          language={language}
+          onEmergencyDetected={handleVoiceEmergency}
+          className="w-full"
         />
       </div>
 
@@ -136,9 +151,17 @@ const Emergency = () => {
       {/* Alert Modal */}
       <EmergencyAlertModal
         open={showAlertModal}
-        onOpenChange={setShowAlertModal}
+        onOpenChange={(open) => {
+          setShowAlertModal(open);
+          if (!open) {
+            setVoiceSymptoms('');
+            setVoicePriority('');
+          }
+        }}
         language={language}
         userLocation={userLocation}
+        initialSymptoms={voiceSymptoms}
+        initialPriority={voicePriority}
       />
     </div>
   );
