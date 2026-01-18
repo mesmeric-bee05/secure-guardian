@@ -116,6 +116,18 @@ export const translations = {
     profileUpdated: 'Profile updated successfully',
     contactAdded: 'Emergency contact added',
     alertSent: 'Emergency alert sent. Help is on the way!',
+    
+    // Voice Emergency
+    voiceEmergency: 'Voice Emergency',
+    voiceNotSupported: 'Voice not supported',
+    speakSymptoms: 'Speak your symptoms or emergency...',
+    detectedEmergency: 'Detected Emergency',
+    sendAlert: 'Send Alert',
+    listeningNow: 'Listening...',
+    paused: 'Paused',
+    continue: 'Continue',
+    voiceActivated: 'Voice-Activated Alert',
+    voiceActivatedDesc: 'Speak your emergency hands-free',
     locationShared: 'Your location has been shared',
   },
   
@@ -232,6 +244,18 @@ export const translations = {
     profileUpdated: 'Wasifu umesasishwa',
     contactAdded: 'Mwasiliani wa dharura ameongezwa',
     alertSent: 'Tahadhari ya dharura imetumwa. Msaada unakuja!',
+    
+    // Voice Emergency
+    voiceEmergency: 'Dharura ya Sauti',
+    voiceNotSupported: 'Sauti haitegemezwi',
+    speakSymptoms: 'Sema dalili zako au dharura yako...',
+    detectedEmergency: 'Dharura Iliyotambuliwa',
+    sendAlert: 'Tuma Tahadhari',
+    listeningNow: 'Inasikiliza...',
+    paused: 'Imesimamishwa',
+    continue: 'Endelea',
+    voiceActivated: 'Tahadhari ya Sauti',
+    voiceActivatedDesc: 'Sema dharura yako bila kutumia mikono',
     locationShared: 'Mahali pako pameshirikiwa',
   },
 } as const;

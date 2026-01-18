@@ -7,8 +7,10 @@ import { UsersTab } from '@/components/admin/UsersTab';
 import { FacilitiesTab } from '@/components/admin/FacilitiesTab';
 import { ProtocolsTab } from '@/components/admin/ProtocolsTab';
 import { AuditLogsTab } from '@/components/admin/AuditLogsTab';
+import { CHWManagementTab } from '@/components/admin/CHWManagementTab';
+import { SMSDashboardTab } from '@/components/admin/SMSDashboardTab';
 
-type AdminTab = 'users' | 'facilities' | 'protocols' | 'audit';
+type AdminTab = 'users' | 'facilities' | 'protocols' | 'audit' | 'chw' | 'sms';
 
 export default function Admin() {
   const navigate = useNavigate();
@@ -18,10 +20,14 @@ export default function Admin() {
     switch (activeTab) {
       case 'users':
         return <UsersTab />;
+      case 'chw':
+        return <CHWManagementTab />;
       case 'facilities':
         return <FacilitiesTab />;
       case 'protocols':
         return <ProtocolsTab />;
+      case 'sms':
+        return <SMSDashboardTab />;
       case 'audit':
         return <AuditLogsTab />;
       default:

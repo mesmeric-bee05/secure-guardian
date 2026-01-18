@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { AlertTriangle, MapPin, Loader2, WifiOff } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { AlertTriangle, MapPin, Loader2, WifiOff, Mic } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -29,6 +29,8 @@ interface EmergencyAlertModalProps {
   language: Language;
   userLocation: { lat: number; lng: number } | null;
   locationAddress?: string;
+  initialSymptoms?: string;
+  initialPriority?: string;
 }
 
 const priorities = [
@@ -44,11 +46,26 @@ const EmergencyAlertModal = ({
   language,
   userLocation,
   locationAddress,
+  initialSymptoms = '',
+  initialPriority = '',
 }: EmergencyAlertModalProps) => {
-  const [symptoms, setSymptoms] = useState('');
-  const [priority, setPriority] = useState<string>('high');
+  const [symptoms, setSymptoms] = useState(initialSymptoms);
+  const [priority, setPriority] = useState<string>(initialPriority || 'high');
   const [sending, setSending] = useState(false);
   const isOnline = navigator.onLine;
+
+  // Update state when initial values change (from voice input)
+  useEffect(() => {
+    if (initialSymptoms) {
+      setSymptoms(initialSymptoms);
+    }
+  }, [initialSymptoms]);
+
+  useEffect(() => {
+    if (initialPriority) {
+      setPriority(initialPriority);
+    }
+  }, [initialPriority]);
 
   const handleSend = async () => {
     if (!symptoms.trim()) {
