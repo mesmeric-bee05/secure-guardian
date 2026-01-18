@@ -111,24 +111,33 @@ export type Database = {
           assigned_at: string | null
           chw_user_id: string
           city: string | null
+          coverage_radius_km: number | null
           id: string
           is_active: boolean | null
+          latitude: number | null
+          longitude: number | null
           region: string
         }
         Insert: {
           assigned_at?: string | null
           chw_user_id: string
           city?: string | null
+          coverage_radius_km?: number | null
           id?: string
           is_active?: boolean | null
+          latitude?: number | null
+          longitude?: number | null
           region: string
         }
         Update: {
           assigned_at?: string | null
           chw_user_id?: string
           city?: string | null
+          coverage_radius_km?: number | null
           id?: string
           is_active?: boolean | null
+          latitude?: number | null
+          longitude?: number | null
           region?: string
         }
         Relationships: []
@@ -370,32 +379,44 @@ export type Database = {
       sms_logs: {
         Row: {
           created_at: string | null
+          delivered_at: string | null
+          delivery_status: string | null
           direction: string | null
+          failure_reason: string | null
           id: string
           message: string
           phone_number: string
           provider_message_id: string | null
           status: string | null
+          status_updated_at: string | null
           user_id: string | null
         }
         Insert: {
           created_at?: string | null
+          delivered_at?: string | null
+          delivery_status?: string | null
           direction?: string | null
+          failure_reason?: string | null
           id?: string
           message: string
           phone_number: string
           provider_message_id?: string | null
           status?: string | null
+          status_updated_at?: string | null
           user_id?: string | null
         }
         Update: {
           created_at?: string | null
+          delivered_at?: string | null
+          delivery_status?: string | null
           direction?: string | null
+          failure_reason?: string | null
           id?: string
           message?: string
           phone_number?: string
           provider_message_id?: string | null
           status?: string | null
+          status_updated_at?: string | null
           user_id?: string | null
         }
         Relationships: []
@@ -459,6 +480,23 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      calculate_distance_km: {
+        Args: { lat1: number; lat2: number; lng1: number; lng2: number }
+        Returns: number
+      }
+      find_nearest_chw: {
+        Args: {
+          emergency_lat: number
+          emergency_lng: number
+          max_distance_km?: number
+        }
+        Returns: {
+          chw_user_id: string
+          city: string
+          distance_km: number
+          region: string
+        }[]
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
