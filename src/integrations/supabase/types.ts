@@ -384,9 +384,12 @@ export type Database = {
           direction: string | null
           failure_reason: string | null
           id: string
+          last_retry_at: string | null
           message: string
+          original_message_id: string | null
           phone_number: string
           provider_message_id: string | null
+          retry_count: number | null
           status: string | null
           status_updated_at: string | null
           user_id: string | null
@@ -398,9 +401,12 @@ export type Database = {
           direction?: string | null
           failure_reason?: string | null
           id?: string
+          last_retry_at?: string | null
           message: string
+          original_message_id?: string | null
           phone_number: string
           provider_message_id?: string | null
+          retry_count?: number | null
           status?: string | null
           status_updated_at?: string | null
           user_id?: string | null
@@ -412,9 +418,12 @@ export type Database = {
           direction?: string | null
           failure_reason?: string | null
           id?: string
+          last_retry_at?: string | null
           message?: string
+          original_message_id?: string | null
           phone_number?: string
           provider_message_id?: string | null
+          retry_count?: number | null
           status?: string | null
           status_updated_at?: string | null
           user_id?: string | null
