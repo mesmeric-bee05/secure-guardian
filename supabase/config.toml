@@ -38,3 +38,6 @@ verify_jwt = false
 
 [functions.sms-webhook]
 verify_jwt = false
+
+[functions.sms-retry]
+verify_jwt = false

@@ -38,8 +38,19 @@ import {
   XCircle,
   Clock,
   TrendingUp,
+  RotateCcw,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { 
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { 
   LineChart, 
   Line, 
@@ -66,6 +77,8 @@ interface SMSLog {
   status_updated_at: string | null;
   user_id: string | null;
   provider_message_id: string | null;
+  retry_count?: number | null;
+  last_retry_at?: string | null;
 }
 
 const statusColors: Record<string, string> = {
@@ -77,6 +90,8 @@ const statusColors: Record<string, string> = {
 
 const PIE_COLORS = ['#22c55e', '#3b82f6', '#ef4444', '#f59e0b'];
 
+const MAX_RETRIES = 3;
+
 export function SMSDashboardTab() {
   const [logs, setLogs] = useState<SMSLog[]>([]);
   const [loading, setLoading] = useState(true);
@@ -85,6 +100,8 @@ export function SMSDashboardTab() {
   const [directionFilter, setDirectionFilter] = useState<string>('all');
   const [selectedLog, setSelectedLog] = useState<SMSLog | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
+  const [retryConfirmLog, setRetryConfirmLog] = useState<SMSLog | null>(null);
 
   // Stats
   const [stats, setStats] = useState({
@@ -171,6 +188,52 @@ export function SMSDashboardTab() {
   const openDetailModal = (log: SMSLog) => {
     setSelectedLog(log);
     setIsDetailModalOpen(true);
+  };
+
+  const handleRetrySMS = async (log: SMSLog) => {
+    if (!log) return;
+    
+    setRetryConfirmLog(null);
+    setRetryingIds(prev => new Set(prev).add(log.id));
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session) {
+        toast.error('Please log in to retry SMS');
+        return;
+      }
+
+      const response = await supabase.functions.invoke('sms-retry', {
+        body: { sms_log_ids: [log.id] },
+      });
+
+      if (response.error) {
+        throw new Error(response.error.message || 'Failed to retry SMS');
+      }
+
+      const result = response.data;
+      
+      if (result.results?.[0]?.success) {
+        toast.success('SMS retry initiated successfully');
+        fetchLogs(); // Refresh the list
+      } else {
+        toast.error(result.results?.[0]?.message || 'Retry failed');
+      }
+    } catch (error) {
+      console.error('SMS retry error:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to retry SMS');
+    } finally {
+      setRetryingIds(prev => {
+        const next = new Set(prev);
+        next.delete(log.id);
+        return next;
+      });
+    }
+  };
+
+  const canRetry = (log: SMSLog) => {
+    return log.status === 'failed' && (log.retry_count || 0) < MAX_RETRIES;
   };
 
   const maskPhoneNumber = (phone: string) => {
@@ -447,21 +510,45 @@ export function SMSDashboardTab() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <Badge 
-                            variant="outline"
-                            className={statusColors[log.delivery_status || log.status || 'pending']}
-                          >
-                            {log.delivery_status || log.status || 'pending'}
-                          </Badge>
+                          <div className="flex items-center gap-1">
+                            <Badge 
+                              variant="outline"
+                              className={statusColors[log.delivery_status || log.status || 'pending']}
+                            >
+                              {log.delivery_status || log.status || 'pending'}
+                            </Badge>
+                            {log.retry_count && log.retry_count > 0 && (
+                              <span className="text-xs text-muted-foreground">
+                                ({log.retry_count}x)
+                              </span>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => openDetailModal(log)}
-                          >
-                            <Eye className="w-4 h-4" />
-                          </Button>
+                          <div className="flex justify-end gap-1">
+                            {canRetry(log) && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setRetryConfirmLog(log)}
+                                disabled={retryingIds.has(log.id)}
+                                title="Retry SMS"
+                              >
+                                {retryingIds.has(log.id) ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                  <RotateCcw className="w-4 h-4" />
+                                )}
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => openDetailModal(log)}
+                            >
+                              <Eye className="w-4 h-4" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))
@@ -559,12 +646,51 @@ export function SMSDashboardTab() {
           )}
 
           <DialogFooter>
+            {selectedLog && canRetry(selectedLog) && (
+              <Button 
+                variant="outline" 
+                onClick={() => {
+                  setIsDetailModalOpen(false);
+                  setRetryConfirmLog(selectedLog);
+                }}
+                disabled={retryingIds.has(selectedLog.id)}
+              >
+                <RotateCcw className="w-4 h-4 mr-2" />
+                Retry
+              </Button>
+            )}
             <Button variant="outline" onClick={() => setIsDetailModalOpen(false)}>
               Close
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Retry Confirmation Dialog */}
+      <AlertDialog open={!!retryConfirmLog} onOpenChange={() => setRetryConfirmLog(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Retry SMS Message</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to retry sending this SMS to{' '}
+              <span className="font-mono font-medium">
+                {retryConfirmLog?.phone_number ? maskPhoneNumber(retryConfirmLog.phone_number) : ''}
+              </span>?
+              {retryConfirmLog?.retry_count && retryConfirmLog.retry_count > 0 && (
+                <span className="block mt-2 text-amber-600">
+                  This message has already been retried {retryConfirmLog.retry_count} time(s).
+                </span>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => retryConfirmLog && handleRetrySMS(retryConfirmLog)}>
+              Retry SMS
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

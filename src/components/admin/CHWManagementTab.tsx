@@ -42,8 +42,12 @@ import {
   Activity,
   CheckCircle,
   Clock,
+  Map,
+  List,
+  Crosshair,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import CHWLocationMap from './CHWLocationMap';
 
 interface CHWAssignment {
   id: string;
@@ -82,6 +86,8 @@ export function CHWManagementTab() {
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [selectedAssignment, setSelectedAssignment] = useState<CHWAssignment | null>(null);
   const [saving, setSaving] = useState(false);
+  const [viewMode, setViewMode] = useState<'table' | 'map'>('table');
+  const [isPickingLocation, setIsPickingLocation] = useState(false);
   const [availableUsers, setAvailableUsers] = useState<UserForAssignment[]>([]);
 
   // Form state
@@ -402,7 +408,7 @@ export function CHWManagementTab() {
         </Card>
       </div>
 
-      {/* CHW Table */}
+      {/* CHW Table/Map */}
       <Card>
         <CardHeader>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -411,15 +417,38 @@ export function CHWManagementTab() {
               CHW Assignments
             </CardTitle>
             <div className="flex gap-2">
-              <div className="relative flex-1 sm:w-64">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search CHWs..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10"
-                />
+              {/* View Toggle */}
+              <div className="flex rounded-md border">
+                <Button
+                  variant={viewMode === 'table' ? 'default' : 'ghost'}
+                  size="sm"
+                  onClick={() => setViewMode('table')}
+                  className="rounded-r-none"
+                >
+                  <List className="w-4 h-4 mr-1" />
+                  Table
+                </Button>
+                <Button
+                  variant={viewMode === 'map' ? 'default' : 'ghost'}
+                  size="sm"
+                  onClick={() => setViewMode('map')}
+                  className="rounded-l-none"
+                >
+                  <Map className="w-4 h-4 mr-1" />
+                  Map
+                </Button>
               </div>
+              {viewMode === 'table' && (
+                <div className="relative flex-1 sm:w-64">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search CHWs..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-10"
+                  />
+                </div>
+              )}
               <Button onClick={openCreateModal}>
                 <Plus className="w-4 h-4 mr-2" />
                 Add CHW
@@ -431,6 +460,13 @@ export function CHWManagementTab() {
           {loading ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
+            </div>
+          ) : viewMode === 'map' ? (
+            <div className="h-[500px]">
+              <CHWLocationMap
+                assignments={assignments}
+                onSelectAssignment={(assignment) => openEditModal(assignment)}
+              />
             </div>
           ) : (
             <div className="overflow-x-auto">
