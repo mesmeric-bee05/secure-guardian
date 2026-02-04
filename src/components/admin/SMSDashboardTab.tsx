@@ -15,6 +15,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -63,6 +64,8 @@ import {
   Pie,
   Cell,
 } from 'recharts';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Progress } from '@/components/ui/progress';
 
 interface SMSLog {
   id: string;
@@ -102,6 +105,13 @@ export function SMSDashboardTab() {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
   const [retryConfirmLog, setRetryConfirmLog] = useState<SMSLog | null>(null);
+  
+  // Bulk retry state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isBulkRetrying, setIsBulkRetrying] = useState(false);
+  const [bulkRetryProgress, setBulkRetryProgress] = useState(0);
+  const [showBulkRetryConfirm, setShowBulkRetryConfirm] = useState(false);
+  const [bulkRetryType, setBulkRetryType] = useState<'selected' | 'all'>('selected');
 
   // Stats
   const [stats, setStats] = useState({
@@ -132,6 +142,7 @@ export function SMSDashboardTab() {
       if (error) throw error;
 
       setLogs(data || []);
+      setSelectedIds(new Set()); // Clear selection on refresh
 
       // Calculate stats
       const total = data?.length || 0;
@@ -216,7 +227,7 @@ export function SMSDashboardTab() {
       
       if (result.results?.[0]?.success) {
         toast.success('SMS retry initiated successfully');
-        fetchLogs(); // Refresh the list
+        fetchLogs();
       } else {
         toast.error(result.results?.[0]?.message || 'Retry failed');
       }
@@ -232,6 +243,61 @@ export function SMSDashboardTab() {
     }
   };
 
+  const handleBulkRetry = async () => {
+    setShowBulkRetryConfirm(false);
+    setIsBulkRetrying(true);
+    setBulkRetryProgress(0);
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session) {
+        toast.error('Please log in to retry SMS');
+        return;
+      }
+
+      let response;
+      
+      if (bulkRetryType === 'all') {
+        response = await supabase.functions.invoke('sms-retry', {
+          body: { retry_all_failed: true },
+        });
+      } else {
+        response = await supabase.functions.invoke('sms-retry', {
+          body: { sms_log_ids: Array.from(selectedIds) },
+        });
+      }
+
+      if (response.error) {
+        throw new Error(response.error.message || 'Failed to retry SMS');
+      }
+
+      const result = response.data;
+      
+      if (result.summary) {
+        const { succeeded, failed, attempted } = result.summary;
+        setBulkRetryProgress(100);
+        
+        if (succeeded > 0) {
+          toast.success(`Bulk retry complete: ${succeeded}/${attempted} succeeded`);
+        } else if (attempted === 0) {
+          toast.info('No failed messages to retry');
+        } else {
+          toast.error(`Bulk retry failed: 0/${attempted} succeeded`);
+        }
+        
+        fetchLogs();
+      }
+    } catch (error) {
+      console.error('Bulk SMS retry error:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to retry SMS');
+    } finally {
+      setIsBulkRetrying(false);
+      setSelectedIds(new Set());
+      setBulkRetryProgress(0);
+    }
+  };
+
   const canRetry = (log: SMSLog) => {
     return log.status === 'failed' && (log.retry_count || 0) < MAX_RETRIES;
   };
@@ -239,6 +305,27 @@ export function SMSDashboardTab() {
   const maskPhoneNumber = (phone: string) => {
     if (phone.length <= 6) return phone;
     return phone.slice(0, 4) + '***' + phone.slice(-3);
+  };
+
+  const toggleSelection = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    const retryableLogs = filteredLogs.filter(canRetry);
+    if (selectedIds.size === retryableLogs.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(retryableLogs.map(l => l.id)));
+    }
   };
 
   const filteredLogs = logs.filter((log) => {
@@ -257,6 +344,9 @@ export function SMSDashboardTab() {
 
     return matchesSearch && matchesStatus && matchesDirection;
   });
+
+  const failedLogsCount = logs.filter(l => l.status === 'failed' && (l.retry_count || 0) < MAX_RETRIES).length;
+  const retryableLogs = filteredLogs.filter(canRetry);
 
   const pieData = [
     { name: 'Delivered', value: stats.delivered },
@@ -418,6 +508,39 @@ export function SMSDashboardTab() {
               SMS Logs
             </CardTitle>
             <div className="flex flex-wrap gap-2">
+              {/* Bulk Retry Buttons */}
+              {failedLogsCount > 0 && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => {
+                    setBulkRetryType('all');
+                    setShowBulkRetryConfirm(true);
+                  }}
+                  disabled={isBulkRetrying}
+                >
+                  {isBulkRetrying ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <RotateCcw className="w-4 h-4 mr-2" />
+                  )}
+                  Retry All Failed ({failedLogsCount})
+                </Button>
+              )}
+              {selectedIds.size > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setBulkRetryType('selected');
+                    setShowBulkRetryConfirm(true);
+                  }}
+                  disabled={isBulkRetrying}
+                >
+                  <RotateCcw className="w-4 h-4 mr-2" />
+                  Retry Selected ({selectedIds.size})
+                </Button>
+              )}
               <div className="relative flex-1 sm:w-48">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
@@ -454,6 +577,17 @@ export function SMSDashboardTab() {
               </Button>
             </div>
           </div>
+          
+          {/* Bulk Retry Progress */}
+          {isBulkRetrying && (
+            <div className="mt-4 space-y-2">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Retrying failed messages...
+              </div>
+              <Progress value={bulkRetryProgress} />
+            </div>
+          )}
         </CardHeader>
         <CardContent>
           {loading ? (
@@ -465,6 +599,13 @@ export function SMSDashboardTab() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-10">
+                      <Checkbox
+                        checked={retryableLogs.length > 0 && selectedIds.size === retryableLogs.length}
+                        onCheckedChange={toggleSelectAll}
+                        disabled={retryableLogs.length === 0}
+                      />
+                    </TableHead>
                     <TableHead>Time</TableHead>
                     <TableHead>Phone</TableHead>
                     <TableHead>Message</TableHead>
@@ -476,13 +617,21 @@ export function SMSDashboardTab() {
                 <TableBody>
                   {filteredLogs.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                         No SMS logs found
                       </TableCell>
                     </TableRow>
                   ) : (
                     filteredLogs.slice(0, 100).map((log) => (
                       <TableRow key={log.id}>
+                        <TableCell>
+                          {canRetry(log) && (
+                            <Checkbox
+                              checked={selectedIds.has(log.id)}
+                              onCheckedChange={() => toggleSelection(log.id)}
+                            />
+                          )}
+                        </TableCell>
                         <TableCell className="whitespace-nowrap text-sm">
                           {log.created_at 
                             ? new Date(log.created_at).toLocaleString('en-US', {
@@ -568,6 +717,9 @@ export function SMSDashboardTab() {
               <MessageSquare className="w-5 h-5" />
               SMS Details
             </DialogTitle>
+            <DialogDescription>
+              View detailed information about this SMS message.
+            </DialogDescription>
           </DialogHeader>
 
           {selectedLog && (
@@ -687,6 +839,36 @@ export function SMSDashboardTab() {
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={() => retryConfirmLog && handleRetrySMS(retryConfirmLog)}>
               Retry SMS
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Bulk Retry Confirmation Dialog */}
+      <AlertDialog open={showBulkRetryConfirm} onOpenChange={setShowBulkRetryConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {bulkRetryType === 'all' ? 'Retry All Failed Messages' : 'Retry Selected Messages'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {bulkRetryType === 'all' ? (
+                <>
+                  Are you sure you want to retry all {failedLogsCount} failed SMS messages?
+                  This will attempt to resend each message up to {MAX_RETRIES} times.
+                </>
+              ) : (
+                <>
+                  Are you sure you want to retry {selectedIds.size} selected SMS message(s)?
+                  This will attempt to resend each message up to {MAX_RETRIES} times.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleBulkRetry}>
+              {bulkRetryType === 'all' ? 'Retry All Failed' : 'Retry Selected'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

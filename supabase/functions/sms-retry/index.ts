@@ -6,9 +6,8 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Exponential backoff delays in milliseconds
-const RETRY_DELAYS = [2000, 4000, 8000]; // 2s, 4s, 8s
 const MAX_RETRIES = 3;
+const CONCURRENT_LIMIT = 5;
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -40,16 +39,16 @@ serve(async (req) => {
     });
 
     const token = authHeader.replace('Bearer ', '');
-    const { data: claims, error: claimsError } = await supabaseAuth.auth.getClaims(token);
+    const { data: claims, error: claimsError } = await supabaseAuth.auth.getUser(token);
     
-    if (claimsError || !claims?.claims) {
+    if (claimsError || !claims?.user) {
       return new Response(
         JSON.stringify({ error: 'Unauthorized - Invalid token' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    const userId = claims.claims.sub as string;
+    const userId = claims.user.id;
 
     // Check if user is admin using service role
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
@@ -65,18 +64,50 @@ serve(async (req) => {
 
     // Parse request body
     const body = await req.json();
-    const { sms_log_ids } = body;
+    const { sms_log_ids, retry_all_failed } = body;
 
-    if (!sms_log_ids || !Array.isArray(sms_log_ids) || sms_log_ids.length === 0) {
+    // Determine which messages to retry
+    let targetIds: string[] = [];
+    
+    if (retry_all_failed === true) {
+      // Fetch all failed messages that haven't exceeded max retries
+      const { data: failedLogs, error: fetchAllError } = await supabase
+        .from('sms_logs')
+        .select('id')
+        .eq('status', 'failed')
+        .lt('retry_count', MAX_RETRIES)
+        .limit(50);
+      
+      if (fetchAllError) {
+        console.error('Error fetching failed SMS logs:', fetchAllError);
+        throw new Error('Failed to fetch failed SMS logs');
+      }
+      
+      targetIds = (failedLogs || []).map(l => l.id);
+      
+      if (targetIds.length === 0) {
+        return new Response(
+          JSON.stringify({ 
+            success: true, 
+            message: 'No failed messages to retry',
+            results: [],
+            summary: { attempted: 0, succeeded: 0, failed: 0 }
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    } else if (sms_log_ids && Array.isArray(sms_log_ids) && sms_log_ids.length > 0) {
+      targetIds = sms_log_ids;
+    } else {
       return new Response(
-        JSON.stringify({ error: 'Missing or invalid sms_log_ids array' }),
+        JSON.stringify({ error: 'Missing sms_log_ids array or retry_all_failed flag' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    if (sms_log_ids.length > 10) {
+    if (targetIds.length > 50) {
       return new Response(
-        JSON.stringify({ error: 'Maximum 10 messages per retry request' }),
+        JSON.stringify({ error: 'Maximum 50 messages per retry request' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -85,7 +116,7 @@ serve(async (req) => {
     const { data: smsLogs, error: fetchError } = await supabase
       .from('sms_logs')
       .select('*')
-      .in('id', sms_log_ids)
+      .in('id', targetIds)
       .eq('status', 'failed');
 
     if (fetchError) {
@@ -100,100 +131,105 @@ serve(async (req) => {
       );
     }
 
-    // Process each SMS for retry
+    // Process SMS with concurrency limiting
     const results: { id: string; success: boolean; message: string }[] = [];
     const callbackUrl = `${SUPABASE_URL}/functions/v1/sms-webhook`;
 
-    for (const sms of smsLogs) {
-      const currentRetryCount = (sms.retry_count || 0) + 1;
+    // Process in batches for concurrency control
+    for (let i = 0; i < smsLogs.length; i += CONCURRENT_LIMIT) {
+      const batch = smsLogs.slice(i, i + CONCURRENT_LIMIT);
       
-      if (currentRetryCount > MAX_RETRIES) {
-        results.push({
-          id: sms.id,
-          success: false,
-          message: `Maximum retry attempts (${MAX_RETRIES}) exceeded`,
-        });
-        continue;
-      }
+      const batchResults = await Promise.all(batch.map(async (sms) => {
+        const currentRetryCount = (sms.retry_count || 0) + 1;
+        
+        if (currentRetryCount > MAX_RETRIES) {
+          return {
+            id: sms.id,
+            success: false,
+            message: `Maximum retry attempts (${MAX_RETRIES}) exceeded`,
+          };
+        }
 
-      // Apply exponential backoff delay
-      const delayMs = RETRY_DELAYS[Math.min(currentRetryCount - 1, RETRY_DELAYS.length - 1)];
-      await new Promise(resolve => setTimeout(resolve, delayMs));
+        // Small delay between concurrent requests
+        await new Promise(resolve => setTimeout(resolve, 200 * (i % CONCURRENT_LIMIT)));
 
-      console.log(`Retrying SMS ${sms.id} (attempt ${currentRetryCount}/${MAX_RETRIES})`);
+        console.log(`Retrying SMS ${sms.id} (attempt ${currentRetryCount}/${MAX_RETRIES})`);
 
-      try {
-        // Send SMS via Africa's Talking
-        const atResponse = await fetch('https://api.africastalking.com/version1/messaging', {
-          method: 'POST',
-          headers: {
-            'apiKey': AFRICAS_TALKING_API_KEY,
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Accept': 'application/json',
-          },
-          body: new URLSearchParams({
-            username: AFRICAS_TALKING_USERNAME,
-            to: sms.phone_number,
-            message: sms.message,
-            from: 'MediReach',
-            callback: callbackUrl,
-          }),
-        });
+        try {
+          // Send SMS via Africa's Talking
+          const atResponse = await fetch('https://api.africastalking.com/version1/messaging', {
+            method: 'POST',
+            headers: {
+              'apiKey': AFRICAS_TALKING_API_KEY,
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Accept': 'application/json',
+            },
+            body: new URLSearchParams({
+              username: AFRICAS_TALKING_USERNAME,
+              to: sms.phone_number,
+              message: sms.message,
+              from: 'MediReach',
+              callback: callbackUrl,
+            }),
+          });
 
-        const atResult = await atResponse.json();
-        const recipient = atResult.SMSMessageData?.Recipients?.[0];
-        const newStatus = recipient?.status || 'sent';
+          const atResult = await atResponse.json();
+          const recipient = atResult.SMSMessageData?.Recipients?.[0];
+          const newStatus = recipient?.status || 'sent';
 
-        // Update the original SMS log
-        await supabase
-          .from('sms_logs')
-          .update({
-            status: newStatus,
-            retry_count: currentRetryCount,
-            last_retry_at: new Date().toISOString(),
-            provider_message_id: recipient?.messageId || sms.provider_message_id,
-            failure_reason: null, // Clear previous failure reason
-          })
-          .eq('id', sms.id);
+          // Update the original SMS log
+          await supabase
+            .from('sms_logs')
+            .update({
+              status: newStatus,
+              retry_count: currentRetryCount,
+              last_retry_at: new Date().toISOString(),
+              provider_message_id: recipient?.messageId || sms.provider_message_id,
+              failure_reason: null,
+            })
+            .eq('id', sms.id);
 
-        // Log audit entry
-        await supabase.from('audit_logs').insert({
-          user_id: userId,
-          action: 'sms_retry',
-          resource_type: 'sms_logs',
-          resource_id: sms.id,
-          details: {
-            retry_count: currentRetryCount,
-            new_status: newStatus,
-            phone_number_masked: sms.phone_number.slice(0, 4) + '****',
-          },
-        });
+          // Log audit entry
+          await supabase.from('audit_logs').insert({
+            user_id: userId,
+            action: 'sms_retry',
+            resource_type: 'sms_logs',
+            resource_id: sms.id,
+            details: {
+              retry_count: currentRetryCount,
+              new_status: newStatus,
+              phone_number_masked: sms.phone_number.slice(0, 4) + '****',
+            },
+          });
 
-        results.push({
-          id: sms.id,
-          success: true,
-          message: `Retry ${currentRetryCount} sent successfully`,
-        });
+          return {
+            id: sms.id,
+            success: true,
+            message: `Retry ${currentRetryCount} sent successfully`,
+          };
 
-      } catch (retryError) {
-        console.error(`Retry failed for SMS ${sms.id}:`, retryError);
+        } catch (retryError) {
+          console.error(`Retry failed for SMS ${sms.id}:`, retryError);
 
-        // Update with failure
-        await supabase
-          .from('sms_logs')
-          .update({
-            retry_count: currentRetryCount,
-            last_retry_at: new Date().toISOString(),
-            failure_reason: retryError instanceof Error ? retryError.message : 'Unknown error',
-          })
-          .eq('id', sms.id);
+          // Update with failure
+          await supabase
+            .from('sms_logs')
+            .update({
+              retry_count: currentRetryCount,
+              last_retry_at: new Date().toISOString(),
+              failure_reason: retryError instanceof Error ? retryError.message : 'Unknown error',
+            })
+            .eq('id', sms.id);
 
-        results.push({
-          id: sms.id,
-          success: false,
-          message: `Retry ${currentRetryCount} failed: ${retryError instanceof Error ? retryError.message : 'Unknown error'}`,
-        });
-      }
+          return {
+            id: sms.id,
+            success: false,
+            message: `Retry ${currentRetryCount} failed: ${retryError instanceof Error ? retryError.message : 'Unknown error'}`,
+          };
+        }
+      }));
+
+      results.push(...batchResults);
     }
 
     console.log('SMS retry completed:', { 

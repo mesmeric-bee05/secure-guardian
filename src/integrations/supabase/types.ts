@@ -114,6 +114,7 @@ export type Database = {
           coverage_radius_km: number | null
           id: string
           is_active: boolean | null
+          last_location_update: string | null
           latitude: number | null
           longitude: number | null
           region: string
@@ -125,6 +126,7 @@ export type Database = {
           coverage_radius_km?: number | null
           id?: string
           is_active?: boolean | null
+          last_location_update?: string | null
           latitude?: number | null
           longitude?: number | null
           region: string
@@ -136,6 +138,7 @@ export type Database = {
           coverage_radius_km?: number | null
           id?: string
           is_active?: boolean | null
+          last_location_update?: string | null
           latitude?: number | null
           longitude?: number | null
           region?: string
