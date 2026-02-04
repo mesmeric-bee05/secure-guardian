@@ -41,3 +41,6 @@ verify_jwt = false
 
 [functions.sms-retry]
 verify_jwt = false
+
+[functions.chw-location-update]
+verify_jwt = false
