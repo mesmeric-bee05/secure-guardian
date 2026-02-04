@@ -11,7 +11,7 @@ interface CHWLocation {
   region: string;
   city: string | null;
   coverage_radius_km: number | null;
-  last_location_update: string | null;
+  last_location_update?: string | null;
 }
 
 interface UseRealtimeCHWLocationsOptions {
@@ -29,13 +29,26 @@ export function useRealtimeCHWLocations(options: UseRealtimeCHWLocationsOptions 
     try {
       const { data, error } = await supabase
         .from('chw_assignments')
-        .select('id, chw_user_id, latitude, longitude, is_active, region, city, coverage_radius_km, last_location_update')
+        .select('*')
         .not('latitude', 'is', null)
         .not('longitude', 'is', null);
 
       if (error) throw error;
       
-      setLocations(data || []);
+      // Cast data to our interface (handles new column that may not be in types yet)
+      const typedData = (data || []).map(item => ({
+        id: item.id,
+        chw_user_id: item.chw_user_id,
+        latitude: item.latitude,
+        longitude: item.longitude,
+        is_active: item.is_active,
+        region: item.region,
+        city: item.city,
+        coverage_radius_km: item.coverage_radius_km,
+        last_location_update: (item as any).last_location_update || null,
+      })) as CHWLocation[];
+      
+      setLocations(typedData);
       setLastUpdate(new Date());
     } catch (error) {
       console.error('Error fetching CHW locations:', error);
@@ -64,7 +77,18 @@ export function useRealtimeCHWLocations(options: UseRealtimeCHWLocationsOptions 
             console.log('CHW location update received:', payload);
             
             if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-              const newLocation = payload.new as CHWLocation;
+              const newData = payload.new as any;
+              const newLocation: CHWLocation = {
+                id: newData.id,
+                chw_user_id: newData.chw_user_id,
+                latitude: newData.latitude,
+                longitude: newData.longitude,
+                is_active: newData.is_active,
+                region: newData.region,
+                city: newData.city,
+                coverage_radius_km: newData.coverage_radius_km,
+                last_location_update: newData.last_location_update || null,
+              };
               
               setLocations(prev => {
                 const existing = prev.findIndex(l => l.id === newLocation.id);
@@ -78,7 +102,7 @@ export function useRealtimeCHWLocations(options: UseRealtimeCHWLocationsOptions 
               
               setLastUpdate(new Date());
             } else if (payload.eventType === 'DELETE') {
-              setLocations(prev => prev.filter(l => l.id !== payload.old.id));
+              setLocations(prev => prev.filter(l => l.id !== (payload.old as any).id));
             }
           }
         )

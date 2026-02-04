@@ -1,6 +1,7 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { formatDistanceToNow } from 'date-fns';
 
 interface CHWAssignment {
   id: string;
@@ -16,6 +17,7 @@ interface CHWAssignment {
   phone_number?: string;
   active_cases?: number;
   resolved_cases?: number;
+  last_location_update?: string | null;
 }
 
 interface CHWLocationMapProps {
@@ -25,13 +27,22 @@ interface CHWLocationMapProps {
   isPickingLocation?: boolean;
   selectedLocation?: { lat: number; lng: number } | null;
   className?: string;
+  showRealtimeIndicators?: boolean;
 }
 
-// Custom marker icon for CHW
-const createCHWIcon = (isActive: boolean) => L.divIcon({
+// Check if location was recently updated (within 5 minutes)
+const isRecentlyUpdated = (lastUpdate: string | null): boolean => {
+  if (!lastUpdate) return false;
+  const updateTime = new Date(lastUpdate).getTime();
+  const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+  return updateTime > fiveMinutesAgo;
+};
+
+// Custom marker icon for CHW with optional pulse effect
+const createCHWIcon = (isActive: boolean, isRecent: boolean = false) => L.divIcon({
   className: 'chw-marker',
   html: `<div style="
-    background-color: ${isActive ? '#22c55e' : '#6b7280'};
+    background-color: ${isActive ? (isRecent ? '#10b981' : '#22c55e') : '#6b7280'};
     width: 36px;
     height: 36px;
     border-radius: 50%;
@@ -40,6 +51,7 @@ const createCHWIcon = (isActive: boolean) => L.divIcon({
     display: flex;
     align-items: center;
     justify-content: center;
+    ${isRecent ? 'animation: chw-pulse 2s infinite;' : ''}
   ">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
       <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
@@ -47,7 +59,13 @@ const createCHWIcon = (isActive: boolean) => L.divIcon({
       <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
       <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
     </svg>
-  </div>`,
+  </div>
+  <style>
+    @keyframes chw-pulse {
+      0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+      50% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
+    }
+  </style>`,
   iconSize: [36, 36],
   iconAnchor: [18, 18],
 });
@@ -81,6 +99,7 @@ export default function CHWLocationMap({
   isPickingLocation = false,
   selectedLocation,
   className = '',
+  showRealtimeIndicators = true,
 }: CHWLocationMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -169,14 +188,15 @@ export default function CHWLocationMap({
     assignments.forEach((assignment) => {
       if (assignment.latitude && assignment.longitude) {
         const isActive = assignment.is_active ?? true;
+        const isRecent = showRealtimeIndicators && isRecentlyUpdated(assignment.last_location_update || null);
         
         // Add coverage circle
         const circle = L.circle(
           [assignment.latitude, assignment.longitude],
           {
             radius: (assignment.coverage_radius_km || 10) * 1000, // Convert km to meters
-            color: isActive ? '#22c55e' : '#6b7280',
-            fillColor: isActive ? '#22c55e' : '#6b7280',
+            color: isActive ? (isRecent ? '#10b981' : '#22c55e') : '#6b7280',
+            fillColor: isActive ? (isRecent ? '#10b981' : '#22c55e') : '#6b7280',
             fillOpacity: 0.15,
             weight: 2,
             dashArray: isActive ? undefined : '5, 10',
@@ -184,10 +204,15 @@ export default function CHWLocationMap({
         ).addTo(mapInstanceRef.current!);
         circlesRef.current.push(circle);
 
+        // Format last seen time
+        const lastSeenText = assignment.last_location_update
+          ? `Last seen: ${formatDistanceToNow(new Date(assignment.last_location_update), { addSuffix: true })}`
+          : 'No recent location update';
+
         // Add marker
         const marker = L.marker(
           [assignment.latitude, assignment.longitude],
-          { icon: createCHWIcon(isActive) }
+          { icon: createCHWIcon(isActive, isRecent) }
         )
           .addTo(mapInstanceRef.current!)
           .bindPopup(`
@@ -207,6 +232,11 @@ export default function CHWLocationMap({
               <div style="margin-top: 6px; font-size: 11px; color: #6b7280;">
                 Coverage: ${assignment.coverage_radius_km || 10} km radius
               </div>
+              ${showRealtimeIndicators ? `
+                <div style="margin-top: 6px; font-size: 11px; color: ${isRecent ? '#10b981' : '#6b7280'};">
+                  ${isRecent ? '🟢 ' : ''}${lastSeenText}
+                </div>
+              ` : ''}
             </div>
           `)
           .on('click', () => {
@@ -222,7 +252,7 @@ export default function CHWLocationMap({
       const group = L.featureGroup([...markersRef.current, ...circlesRef.current]);
       mapInstanceRef.current.fitBounds(group.getBounds().pad(0.1));
     }
-  }, [assignments, onSelectAssignment]);
+  }, [assignments, onSelectAssignment, showRealtimeIndicators]);
 
   return (
     <div className={`relative w-full h-full min-h-[400px] ${className}`}>
@@ -236,6 +266,12 @@ export default function CHWLocationMap({
             <div className="w-3 h-3 rounded-full bg-green-500"></div>
             <span className="text-xs">Active CHW</span>
           </div>
+          {showRealtimeIndicators && (
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse"></div>
+              <span className="text-xs">Recently Updated</span>
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full bg-gray-500"></div>
             <span className="text-xs">Inactive CHW</span>
