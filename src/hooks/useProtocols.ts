@@ -71,8 +71,27 @@ export function useProtocols(language: Language = 'en') {
 
   const getSteps = (protocol: Protocol): string[] => {
     if (!protocol.steps) return [];
-    if (Array.isArray(protocol.steps)) return protocol.steps;
-    return language === 'sw' ? protocol.steps.sw || [] : protocol.steps.en || [];
+    
+    // Handle array of step objects with step_en/step_sw format
+    if (Array.isArray(protocol.steps)) {
+      return protocol.steps.map((step: any) => {
+        if (typeof step === 'string') return step;
+        if (typeof step === 'object' && step !== null) {
+          return language === 'sw' 
+            ? (step.step_sw || step.step_en || '') 
+            : (step.step_en || step.step_sw || '');
+        }
+        return '';
+      }).filter(Boolean);
+    }
+    
+    // Handle legacy {en: [], sw: []} format
+    if (typeof protocol.steps === 'object' && protocol.steps !== null) {
+      const steps = protocol.steps as { en?: string[]; sw?: string[] };
+      return language === 'sw' ? steps.sw || [] : steps.en || [];
+    }
+    
+    return [];
   };
 
   return {
