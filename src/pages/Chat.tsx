@@ -164,6 +164,7 @@ const Chat = () => {
             isLoading={isLoading}
             language={language}
             onSpeak={isSupported ? handleSpeak : undefined}
+            onSendPrompt={sendMessage}
           />
           
           <MedicalDisclaimer language={language} />
