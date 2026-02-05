@@ -14,6 +14,7 @@ interface ChatMessageListProps {
   isLoading: boolean;
   language: Language;
   onSpeak?: (text: string) => void;
+  onSendPrompt?: (prompt: string) => void;
 }
 
 const suggestedPrompts = {
@@ -31,7 +32,7 @@ const suggestedPrompts = {
   ],
 };
 
-const ChatMessageList = ({ messages, isLoading, language, onSpeak }: ChatMessageListProps) => {
+const ChatMessageList = ({ messages, isLoading, language, onSpeak, onSendPrompt }: ChatMessageListProps) => {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -55,6 +56,7 @@ const ChatMessageList = ({ messages, isLoading, language, onSpeak }: ChatMessage
           {suggestedPrompts[language].map((prompt, index) => (
             <button
               key={index}
+              onClick={() => onSendPrompt?.(prompt)}
               className="w-full text-left p-3 rounded-lg border bg-card hover:bg-accent transition-colors text-sm"
             >
               {prompt}
