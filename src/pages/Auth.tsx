@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -29,12 +30,25 @@ export default function Auth() {
     }
 
     setIsLoading(true);
-    const { error } = await signIn(email, password);
+    const { data, error } = await signIn(email, password);
     setIsLoading(false);
 
     if (error) {
       toast({ title: 'Login Failed', description: error.message, variant: 'destructive' });
     } else {
+      // Check if onboarding is completed
+      if (data?.user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('onboarding_completed')
+          .eq('user_id', data.user.id)
+          .single();
+        
+        if (profile && !profile.onboarding_completed) {
+          navigate('/onboarding');
+          return;
+        }
+      }
       navigate('/');
     }
   };
@@ -63,7 +77,7 @@ export default function Auth() {
       toast({ title: 'Signup Failed', description: error.message, variant: 'destructive' });
     } else {
       toast({ title: 'Account Created', description: 'Welcome to MediReach+!' });
-      navigate('/');
+      navigate('/onboarding');
     }
   };
 

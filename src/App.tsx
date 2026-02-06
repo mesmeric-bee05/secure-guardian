@@ -8,6 +8,7 @@ import { useServiceWorker } from "@/hooks/useServiceWorker";
 import OfflineIndicator from "@/components/offline/OfflineIndicator";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
+import Onboarding from "./pages/Onboarding";
 import Chat from "./pages/Chat";
 import Emergency from "./pages/Emergency";
 import Profile from "./pages/Profile";
@@ -31,6 +32,7 @@ const AppContent = () => {
         <Routes>
           <Route path="/" element={<Index />} />
           <Route path="/auth" element={<Auth />} />
+          <Route path="/onboarding" element={<ProtectedRoute><Onboarding /></ProtectedRoute>} />
           <Route path="/chat" element={<ProtectedRoute><Chat /></ProtectedRoute>} />
           <Route path="/emergency" element={<ProtectedRoute><Emergency /></ProtectedRoute>} />
           <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
