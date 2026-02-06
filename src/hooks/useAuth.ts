@@ -12,6 +12,7 @@ interface Profile {
   medical_conditions: string[] | null;
   date_of_birth: string | null;
   preferred_language: 'en' | 'sw';
+  onboarding_completed: boolean;
 }
 
 interface UserRole {

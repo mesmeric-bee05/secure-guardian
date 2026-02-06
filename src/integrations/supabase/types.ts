@@ -340,6 +340,7 @@ export type Database = {
           full_name: string
           id: string
           medical_conditions: string[] | null
+          onboarding_completed: boolean | null
           phone_number: string | null
           preferred_language:
             | Database["public"]["Enums"]["language_preference"]
@@ -355,6 +356,7 @@ export type Database = {
           full_name: string
           id?: string
           medical_conditions?: string[] | null
+          onboarding_completed?: boolean | null
           phone_number?: string | null
           preferred_language?:
             | Database["public"]["Enums"]["language_preference"]
@@ -370,10 +372,41 @@ export type Database = {
           full_name?: string
           id?: string
           medical_conditions?: string[] | null
+          onboarding_completed?: boolean | null
           phone_number?: string | null
           preferred_language?:
             | Database["public"]["Enums"]["language_preference"]
             | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      push_subscriptions: {
+        Row: {
+          auth: string
+          created_at: string | null
+          endpoint: string
+          id: string
+          p256dh: string
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          auth: string
+          created_at?: string | null
+          endpoint: string
+          id?: string
+          p256dh: string
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          auth?: string
+          created_at?: string | null
+          endpoint?: string
+          id?: string
+          p256dh?: string
           updated_at?: string | null
           user_id?: string
         }
