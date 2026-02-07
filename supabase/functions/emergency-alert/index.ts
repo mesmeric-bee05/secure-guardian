@@ -317,6 +317,35 @@ Please check on them immediately or call 999.`;
       
       if (assignError) {
         console.error('Error assigning CHW:', assignError.message);
+      } else {
+        // Send push notification to assigned CHW
+        try {
+          const notifResponse = await fetch(`${SUPABASE_URL}/functions/v1/send-push-notification`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            },
+            body: JSON.stringify({
+              user_id: assignedChw.chw_user_id,
+              title: `🚨 Emergency Alert - ${priority.toUpperCase()}`,
+              body: `New case: ${symptoms.slice(0, 80)}${symptoms.length > 80 ? '...' : ''}`,
+              tag: `emergency-${emergencyCase.id}`,
+              data: {
+                caseId: emergencyCase.id,
+                url: '/dashboard',
+              },
+            }),
+          });
+          
+          if (notifResponse.ok) {
+            console.log('Push notification sent to CHW');
+          } else {
+            console.error('Push notification failed:', await notifResponse.text());
+          }
+        } catch (pushError) {
+          console.error('Push notification error:', pushError);
+        }
       }
     } else {
       console.warn('No CHW available for assignment');

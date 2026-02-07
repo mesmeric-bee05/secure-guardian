@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { offlineStorage } from '@/lib/offlineStorage';
 
 export interface HealthFacility {
   id: string;
@@ -29,10 +30,28 @@ export function useFacilities(options: UseFacilitiesOptions = {}) {
   const [facilities, setFacilities] = useState<HealthFacility[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isOfflineData, setIsOfflineData] = useState(false);
 
   useEffect(() => {
     const fetchFacilities = async () => {
       try {
+        if (!navigator.onLine) {
+          // Load from cache when offline
+          const cached = await offlineStorage.getCachedFacilities();
+          if (cached.length > 0) {
+            let filtered = cached as HealthFacility[];
+            if (type) {
+              filtered = filtered.filter(f => f.facility_type === type);
+            }
+            setFacilities(filtered.slice(0, limit));
+            setIsOfflineData(true);
+          } else {
+            setError('No cached facilities available offline');
+          }
+          setLoading(false);
+          return;
+        }
+
         let query = supabase
           .from('health_facilities')
           .select('*')
@@ -47,7 +66,23 @@ export function useFacilities(options: UseFacilitiesOptions = {}) {
 
         if (fetchError) throw fetchError;
         setFacilities(data as HealthFacility[]);
+        setIsOfflineData(false);
+
+        // Cache for offline use
+        if (data && data.length > 0) {
+          await offlineStorage.cacheFacilities(data);
+        }
       } catch (err) {
+        // Try cache on error
+        try {
+          const cached = await offlineStorage.getCachedFacilities();
+          if (cached.length > 0) {
+            setFacilities(cached as HealthFacility[]);
+            setIsOfflineData(true);
+            setLoading(false);
+            return;
+          }
+        } catch {}
         console.error('Error fetching facilities:', err);
         setError(err instanceof Error ? err.message : 'Failed to fetch facilities');
       } finally {
@@ -78,7 +113,7 @@ export function useFacilities(options: UseFacilitiesOptions = {}) {
       .sort((a, b) => a.distance - b.distance);
   };
 
-  return { facilities, loading, error, getNearbyFacilities };
+  return { facilities, loading, error, isOfflineData, getNearbyFacilities };
 }
 
 // Haversine formula to calculate distance between two points
