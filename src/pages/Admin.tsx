@@ -9,8 +9,12 @@ import { ProtocolsTab } from '@/components/admin/ProtocolsTab';
 import { AuditLogsTab } from '@/components/admin/AuditLogsTab';
 import { CHWManagementTab } from '@/components/admin/CHWManagementTab';
 import { SMSDashboardTab } from '@/components/admin/SMSDashboardTab';
+import { lazy, Suspense } from 'react';
+import { Loader2 } from 'lucide-react';
 
-type AdminTab = 'users' | 'facilities' | 'protocols' | 'audit' | 'chw' | 'sms';
+const ReportsPage = lazy(() => import('@/pages/Reports'));
+
+type AdminTab = 'users' | 'facilities' | 'protocols' | 'audit' | 'chw' | 'sms' | 'reports';
 
 export default function Admin() {
   const navigate = useNavigate();
@@ -30,6 +34,12 @@ export default function Admin() {
         return <SMSDashboardTab />;
       case 'audit':
         return <AuditLogsTab />;
+      case 'reports':
+        return (
+          <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>}>
+            <ReportsPage />
+          </Suspense>
+        );
       default:
         return <UsersTab />;
     }

@@ -234,12 +234,14 @@ export type Database = {
           created_at: string | null
           id: string
           red_flags: string[] | null
+          reference_books: Json | null
           seek_help_when: string[] | null
           severity: string | null
           steps: Json
           title_en: string
           title_sw: string
           updated_at: string | null
+          video_url: string | null
         }
         Insert: {
           category: string
@@ -248,12 +250,14 @@ export type Database = {
           created_at?: string | null
           id?: string
           red_flags?: string[] | null
+          reference_books?: Json | null
           seek_help_when?: string[] | null
           severity?: string | null
           steps: Json
           title_en: string
           title_sw: string
           updated_at?: string | null
+          video_url?: string | null
         }
         Update: {
           category?: string
@@ -262,12 +266,14 @@ export type Database = {
           created_at?: string | null
           id?: string
           red_flags?: string[] | null
+          reference_books?: Json | null
           seek_help_when?: string[] | null
           severity?: string | null
           steps?: Json
           title_en?: string
           title_sw?: string
           updated_at?: string | null
+          video_url?: string | null
         }
         Relationships: []
       }
