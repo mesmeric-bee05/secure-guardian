@@ -3,6 +3,7 @@ import { Bot, User, Volume2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { t, Language } from '@/lib/translations';
+import ReactMarkdown from 'react-markdown';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -90,7 +91,13 @@ const ChatMessageList = ({ messages, isLoading, language, onSpeak, onSendPrompt 
                 : "bg-muted rounded-bl-md"
             )}
           >
-            <p className="text-sm whitespace-pre-wrap leading-relaxed">{message.content}</p>
+            {message.role === 'assistant' ? (
+              <div className="text-sm leading-relaxed prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:my-2">
+                <ReactMarkdown>{message.content}</ReactMarkdown>
+              </div>
+            ) : (
+              <p className="text-sm whitespace-pre-wrap leading-relaxed">{message.content}</p>
+            )}
             {message.role === 'assistant' && onSpeak && (
               <Button
                 variant="ghost"

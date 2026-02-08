@@ -14,6 +14,7 @@ import Emergency from "./pages/Emergency";
 import Profile from "./pages/Profile";
 import Dashboard from "./pages/Dashboard";
 import Admin from "./pages/Admin";
+import Reports from "./pages/Reports";
 import NotFound from "./pages/NotFound";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 
@@ -38,6 +39,7 @@ const AppContent = () => {
           <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
           <Route path="/dashboard" element={<ProtectedRoute requiredRoles={['chw', 'admin']}><Dashboard /></ProtectedRoute>} />
           <Route path="/admin" element={<ProtectedRoute requiredRoles={['admin']}><Admin /></ProtectedRoute>} />
+          <Route path="/reports" element={<ProtectedRoute requiredRoles={['chw', 'admin']}><Reports /></ProtectedRoute>} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>

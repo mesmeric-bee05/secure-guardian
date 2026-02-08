@@ -3,6 +3,13 @@ import { supabase } from '@/integrations/supabase/client';
 import { offlineStorage } from '@/lib/offlineStorage';
 import { Language } from '@/lib/translations';
 
+interface ReferenceBook {
+  title: string;
+  author: string;
+  url: string;
+  isbn?: string;
+}
+
 interface Protocol {
   id: string;
   category: string;
@@ -14,6 +21,8 @@ interface Protocol {
   red_flags: string[] | null;
   seek_help_when: string[] | null;
   severity: string | null;
+  video_url: string | null;
+  reference_books: ReferenceBook[] | null;
 }
 
 interface GroupedProtocols {
