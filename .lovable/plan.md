@@ -1,189 +1,152 @@
 
-# Implementation Plan: Testing, Bug Fixes, Reports Page, First Aid Enhancements & Chat Text Rendering
 
-This plan covers end-to-end testing with bug fixes, a new reports/analytics page, video demos and reference books for first aid protocols, and proper markdown rendering in chat.
+# Comprehensive Plan: Testing, Protocol Enhancements, Dashboard Link, and Security Hardening
 
----
-
-## Bug Fixes Found During Analysis
-
-### 1. Console Warning: DialogHeader ref issue in ProtocolDetailModal
-The `DialogHeader` component is receiving a ref it cannot handle. This is a minor React warning but should be fixed.
-
-### 2. Chat messages render as plain text (no markdown)
-Currently `ChatMessageList.tsx` renders AI responses as plain `<p>` tags with `whitespace-pre-wrap`. AI responses contain markdown (bold, lists, headers) that should be rendered properly. Need to add `react-markdown` rendering.
+This plan addresses four areas: end-to-end verification with fixes, protocol-specific content updates, dashboard navigation improvements, and security hardening based on the uploaded security thesis document.
 
 ---
 
-## Feature 1: Reports/Analytics Page
+## Phase 1: End-to-End Verification and Bug Fixes
 
-Create a dedicated `/reports` page accessible to CHWs and admins showing comprehensive health analytics.
+### 1A. First Aid Protocol Modal -- Video and Books (Verified Working)
+The `ProtocolDetailModal.tsx` already has YouTube embed support (`getYouTubeEmbedUrl`) and reference book sections. Database confirms all protocols have `video_url` and `reference_books` populated. However, all protocols currently share the same two generic books. This is addressed in Phase 2.
 
-### New Files
+### 1B. Reports Page (Verified Working)
+`/reports` route exists and is protected with `requiredRoles={['chw', 'admin']}`. The page fetches from `emergency_cases` and renders 5 chart/table sections. No code errors detected.
 
-**`src/pages/Reports.tsx`**
-Full reports page with multiple analytics sections:
-- Health trends over time (30-day view)
-- Case resolution rates (pie chart)
-- Average response times by priority
-- CHW performance metrics (cases handled, avg resolution time)
-- Top symptoms/conditions reported
-- Regional breakdown of cases
-
-### Database Queries
-All analytics will be computed from the existing `emergency_cases` table using client-side aggregation - no new tables needed.
-
-### Route Addition
-Add `/reports` route in `App.tsx` with CHW/admin role protection.
-
-### Admin Navigation
-Add a "Reports" tab to the Admin panel sidebar.
+### 1C. Chat Markdown Rendering (Verified Working)
+`ChatMessageList.tsx` uses `ReactMarkdown` with `prose prose-sm` classes for assistant messages. User messages remain plain text.
 
 ---
 
-## Feature 2: First Aid Video Demos & Reference Books
+## Phase 2: Protocol-Specific Reference Books and Videos
 
-Enhance the `first_aid_protocols` table and protocol detail modal to include video demonstrations and reference book links.
+Currently every protocol has the same two books ("Where There Is No Doctor" and "First Aid Manual") and videos are partially relevant (e.g., burns and choking share the same video). This phase seeds category-specific content.
 
-### Database Changes
-Add two new columns to `first_aid_protocols`:
-- `video_url` (text, nullable) - URL to a YouTube/video demo
-- `reference_books` (jsonb, nullable) - Array of `{title, author, url, isbn}` objects
+### Database Update (SQL)
+Update each protocol category with tailored video URLs and reference books:
 
-### Modified Files
+| Category | Video Topic | Additional Books |
+|----------|------------|------------------|
+| cardiac / heart_attack | CPR and AED usage (British Heart Foundation) | "CPR, AED and First Aid Provider Handbook" by Karl Disque |
+| burns | Burns treatment (St John Ambulance) | "Emergency Care for Burns" by Springer |
+| bleeding / trauma | Wound care and bleeding control (Stop the Bleed) | "Tactical Medicine Essentials" by NAEMT |
+| choking / breathing | Heimlich maneuver (Red Cross) | "Pediatric First Aid for Caregivers" by AAP |
+| fractures | Fracture immobilization (St John Ambulance) | "Emergency Orthopedics" by Springer |
 
-**`src/components/home/ProtocolDetailModal.tsx`**
-Add two new sections:
-- **Video Demo section**: Embedded YouTube/video player or link with play button and thumbnail
-- **Reference Books section**: List of books with title, author, and links (Amazon, PDF, etc.)
-- Fix the DialogHeader ref warning
-
-**`src/hooks/useProtocols.ts`**
-Update the `Protocol` interface to include `video_url` and `reference_books` fields.
-
-### Seed Data
-Populate existing protocols with relevant video URLs (YouTube first aid videos from reputable sources like Red Cross, St John Ambulance) and reference books (e.g., "First Aid Manual" by DK/Red Cross, "Where There Is No Doctor" by David Werner).
+Each protocol will retain "Where There Is No Doctor" as a universal reference, plus gain 1-2 category-specific books.
 
 ---
 
-## Feature 3: Markdown Rendering in Chat
+## Phase 3: Dashboard Link to Reports Page
 
-### Install Dependency
-Add `react-markdown` package for rendering AI responses.
+### Modified File: `src/pages/Dashboard.tsx`
+Add a "View Reports" button/link in the Dashboard header or analytics tab that navigates CHWs to `/reports`.
 
-### Modified Files
-
-**`src/components/chat/ChatMessageList.tsx`**
-- Import `ReactMarkdown` from `react-markdown`
-- Replace plain `<p>` tag for assistant messages with `<ReactMarkdown>` component
-- Style with `prose prose-sm` classes for proper typography
-- Keep plain text rendering for user messages
+### Modified File: `src/components/dashboard/DashboardHeader.tsx`
+Add a `BarChart3` icon button in the header toolbar that links to `/reports`.
 
 ---
 
-## Feature 4: End-to-End Testing & Fixes
+## Phase 4: Security Hardening (Based on Uploaded Thesis)
 
-After implementing the above features, verify:
-1. Onboarding flow for new users (all 6 steps)
-2. Offline functionality (cached protocols/facilities)
-3. Emergency alert with push notification trigger
-4. Chat prompts and markdown rendering
-5. Protocol detail modal with video and book sections
-6. Reports page data accuracy
+The thesis identifies 10 security vulnerability categories. Here is the assessment and required fixes for this project:
+
+### Already Implemented (No Changes Needed)
+1. **Server-side authorization** -- Edge functions validate JWT tokens and check roles (`is_admin`, `is_chw`) server-side before executing actions.
+2. **Input validation** -- Zod schemas on the frontend (`validations.ts`) and manual validation in every edge function.
+3. **Rate limiting** -- All edge functions implement in-memory rate limiting.
+4. **Webhook verification** -- `sms-webhook` validates delivery report structure and checks for replay attacks.
+5. **RLS policies** -- All tables have RLS enabled with anonymous denial policies.
+6. **Error handling** -- Edge functions log errors server-side and return generic messages to users.
+7. **Sensitive data logging** -- Console logs use truncated user IDs and avoid PII.
+
+### Fixes Required
+
+#### Fix 1: CORS Hardening on Edge Functions (High Priority)
+**Problem (from thesis):** All edge functions use `'Access-Control-Allow-Origin': '*'`, allowing any domain to call APIs.
+**Fix:** Restrict CORS to the project's actual domains.
+
+**Files to modify:**
+- `supabase/functions/ai-chat/index.ts`
+- `supabase/functions/emergency-alert/index.ts`
+- `supabase/functions/sms-gateway/index.ts`
+- `supabase/functions/sms-webhook/index.ts` (keep permissive for webhook callbacks)
+- `supabase/functions/sms-retry/index.ts`
+- `supabase/functions/chw-location-update/index.ts`
+- `supabase/functions/send-push-notification/index.ts`
+- `supabase/functions/ussd-handler/index.ts` (keep permissive for USSD provider)
+
+Create a shared CORS helper that allows only known origins:
+```text
+const ALLOWED_ORIGINS = [
+  'https://id-preview--a195f4d5-59f8-49b0-9a16-0b1c51758426.lovable.app',
+  'https://a195f4d5-59f8-49b0-9a16-0b1c51758426.lovableproject.com',
+];
+```
+
+#### Fix 2: Password Strength Enhancement (Medium Priority)
+**Problem:** Signup schema requires uppercase, lowercase, and number but no special character requirement.
+**Fix:** Add special character requirement to `signupSchema` in `src/lib/validations.ts`:
+```text
+.regex(/[!@#$%^&*(),.?":{}|<>]/, { message: 'Password must contain at least one special character' })
+```
+
+#### Fix 3: Redirect URL Validation (Medium Priority)
+**Problem (from thesis):** The `Auth.tsx` page uses `state.from` for post-login redirect without validating it.
+**Fix:** Add an allowlist check in `Auth.tsx` before navigating to redirect paths. Only allow relative paths starting with `/` and matching known routes.
+
+#### Fix 4: Push Notification Function Auth (Medium Priority)
+**Problem:** `send-push-notification/index.ts` has NO authentication check. Any caller can send push notifications if they know a user_id.
+**Fix:** Add service-role key validation or JWT check to ensure only internal calls (from `emergency-alert`) can invoke it.
+
+#### Fix 5: Verbose Error Messages in Catch Blocks (Low Priority)
+**Problem:** Some edge functions return `error.message` directly to the client in 500 responses, potentially leaking internal details.
+**Fix:** Replace with generic "An error occurred" messages in production responses while keeping server-side logging.
+
+#### Fix 6: Session/JWT Configuration Note (Informational)
+**Problem (from thesis):** Permanent sessions risk. Supabase defaults to 1-hour JWTs with refresh tokens, which is already reasonable. No code change needed but noted for awareness.
+
+#### Fix 7: Leaked Password Protection (Linter Warning)
+**Problem:** The database linter flagged that leaked password protection (HIBP check) is disabled.
+**Fix:** This must be enabled manually in the backend settings. Will note for the user.
 
 ---
 
 ## Implementation Order
 
-1. Database migration: Add `video_url` and `reference_books` columns to `first_aid_protocols`, seed data
-2. Install `react-markdown` dependency
-3. Create Reports page and route
-4. Update ProtocolDetailModal with video/books sections + fix ref warning
-5. Update ChatMessageList with markdown rendering
-6. Update Admin sidebar with Reports tab
-7. Test all flows end-to-end
-
----
-
-## Technical Details
-
-### Protocol Interface Update
-```text
-interface Protocol {
-  ...existing fields...
-  video_url: string | null;
-  reference_books: {
-    title: string;
-    author: string;
-    url: string;
-    isbn?: string;
-  }[] | null;
-}
-```
-
-### Reports Page Sections
-```text
-+-----------------------------------+
-| Reports & Analytics               |
-+-----------------------------------+
-| [30-Day Case Trends Chart]        |
-+------------------+----------------+
-| Resolution Rate  | Response Times |
-| (Pie Chart)      | (Bar Chart)    |
-+------------------+----------------+
-| Top Symptoms     | Regional Data  |
-| (Bar Chart)      | (Table)        |
-+------------------+----------------+
-| CHW Performance Leaderboard       |
-+-----------------------------------+
-```
-
-### Video Demo Section in Protocol Modal
-```text
-+-----------------------------------+
-| Video Demonstration               |
-| +-------------------------------+ |
-| |  [YouTube Embed / Link]       | |
-| |  ► Watch Demo                 | |
-| +-------------------------------+ |
-+-----------------------------------+
-| Recommended Books                 |
-| - First Aid Manual (Red Cross)    |
-|   by DK Publishing [View Book]   |
-| - Where There Is No Doctor        |
-|   by David Werner [View Book]    |
-+-----------------------------------+
-```
-
-### Chat Markdown Rendering
-Assistant messages will render:
-- **Bold text**, *italic text*
-- Numbered and bulleted lists
-- Headers (h1-h6)
-- Code blocks
-- Links
-
-User messages remain plain text with the current styling.
+1. **Dashboard Reports link** -- Add BarChart3 button to DashboardHeader linking to `/reports`
+2. **Protocol-specific content** -- SQL update with tailored videos and books per category
+3. **CORS hardening** -- Update all edge functions with domain-restricted CORS
+4. **Push notification auth** -- Add service-role validation to send-push-notification
+5. **Password special character** -- Update signupSchema
+6. **Redirect validation** -- Add allowlist check in Auth.tsx
+7. **Generic error messages** -- Sanitize 500 responses across edge functions
+8. **Deploy and test** -- Deploy all edge functions and verify
 
 ---
 
 ## Files Summary
 
-### New Files (1)
-- `src/pages/Reports.tsx`
+### Modified Files (12)
+- `src/pages/Dashboard.tsx` -- Add Reports navigation link
+- `src/components/dashboard/DashboardHeader.tsx` -- Add Reports icon button
+- `src/lib/validations.ts` -- Add special character password requirement
+- `src/pages/Auth.tsx` -- Add redirect URL validation
+- `supabase/functions/ai-chat/index.ts` -- CORS hardening + generic errors
+- `supabase/functions/emergency-alert/index.ts` -- CORS hardening + generic errors
+- `supabase/functions/sms-gateway/index.ts` -- CORS hardening + generic errors
+- `supabase/functions/sms-retry/index.ts` -- CORS hardening + generic errors
+- `supabase/functions/chw-location-update/index.ts` -- CORS hardening + generic errors
+- `supabase/functions/send-push-notification/index.ts` -- Auth check + CORS hardening
+- `supabase/functions/sms-webhook/index.ts` -- Generic error cleanup (keep open CORS for webhooks)
+- `supabase/functions/ussd-handler/index.ts` -- Generic error cleanup (keep open CORS for USSD)
 
-### Modified Files (7)
-- `src/App.tsx` - Add `/reports` route
-- `src/components/home/ProtocolDetailModal.tsx` - Add video/books sections, fix ref warning
-- `src/components/chat/ChatMessageList.tsx` - Add markdown rendering
-- `src/hooks/useProtocols.ts` - Update Protocol interface
-- `src/components/admin/AdminSidebar.tsx` - Add Reports tab
-- `src/pages/Admin.tsx` - Add Reports tab content
-- `src/pages/Dashboard.tsx` - Add link to reports page
+### Database Changes (1)
+- UPDATE `first_aid_protocols` with category-specific video URLs and reference books
 
-### Database Migrations
-1. Add `video_url` and `reference_books` columns to `first_aid_protocols`
-2. Seed existing protocols with video URLs and book references
+### No New Files Required
 
-### New Dependencies
-- `react-markdown` - For rendering AI chat responses with proper formatting
+### Manual Action Required
+- Enable leaked password protection (HIBP) in the backend settings (Cloud View)
+
