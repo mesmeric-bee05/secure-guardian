@@ -1,10 +1,19 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+const ALLOWED_ORIGINS = [
+  'https://id-preview--a195f4d5-59f8-49b0-9a16-0b1c51758426.lovable.app',
+  'https://a195f4d5-59f8-49b0-9a16-0b1c51758426.lovableproject.com',
+];
+
+function getCorsHeaders(req: Request) {
+  const origin = req.headers.get('Origin') || '';
+  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    'Access-Control-Allow-Origin': allowedOrigin,
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+  };
+}
 
 // Rate limiting (in-memory, per function instance)
 const rateLimiter = new Map<string, { count: number; resetAt: number }>();
@@ -34,7 +43,6 @@ function validateSMSInput(data: unknown): { valid: boolean; error?: string; pars
 
   const body = data as Record<string, unknown>;
   
-  // Validate 'to' field
   let recipients: string[] = [];
   if (typeof body.to === 'string') {
     recipients = [body.to];
@@ -52,15 +60,13 @@ function validateSMSInput(data: unknown): { valid: boolean; error?: string; pars
     return { valid: false, error: 'Maximum 10 recipients allowed' };
   }
   
-  // Validate phone number format
   const phoneRegex = /^\+?[0-9]{10,15}$/;
   for (const phone of recipients) {
     if (!phoneRegex.test(phone.replace(/\s/g, ''))) {
-      return { valid: false, error: `Invalid phone number format: ${phone.slice(0, 4)}...` };
+      return { valid: false, error: `Invalid phone number format` };
     }
   }
   
-  // Validate message
   if (typeof body.message !== 'string') {
     return { valid: false, error: 'Message must be a string' };
   }
@@ -77,6 +83,8 @@ function validateSMSInput(data: unknown): { valid: boolean; error?: string; pars
 }
 
 serve(async (req) => {
+  const corsHeaders = getCorsHeaders(req);
+
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -89,14 +97,13 @@ serve(async (req) => {
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
     if (!AFRICAS_TALKING_API_KEY || !AFRICAS_TALKING_USERNAME) {
-      throw new Error('Africa\'s Talking credentials not configured');
+      throw new Error('SMS provider not configured');
     }
 
-    // Validate authentication
     const authHeader = req.headers.get('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
       return new Response(
-        JSON.stringify({ error: 'Unauthorized - Missing or invalid authorization header' }),
+        JSON.stringify({ error: 'Unauthorized' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -110,14 +117,13 @@ serve(async (req) => {
     
     if (claimsError || !claims?.claims) {
       return new Response(
-        JSON.stringify({ error: 'Unauthorized - Invalid token' }),
+        JSON.stringify({ error: 'Unauthorized' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
     const userId = claims.claims.sub as string;
 
-    // Rate limiting (stricter for SMS)
     if (!checkRateLimit(userId, 10, 60000)) {
       return new Response(
         JSON.stringify({ error: 'Rate limit exceeded. Please wait a moment and try again.' }),
@@ -127,7 +133,6 @@ serve(async (req) => {
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // Parse and validate input
     const rawBody = await req.json();
     const validation = validateSMSInput(rawBody);
     
@@ -140,7 +145,6 @@ serve(async (req) => {
 
     const { to, message } = validation.parsed;
 
-    // Format phone numbers
     const formattedRecipients = to.map(phone => {
       const cleaned = phone.replace(/\s/g, '');
       if (cleaned.startsWith('+')) return cleaned;
@@ -148,13 +152,10 @@ serve(async (req) => {
       return '+254' + cleaned;
     });
 
-    // Log minimal metadata (no phone numbers or message content)
     console.log('SMS request:', { userId: userId.slice(0, 8) + '...', recipientCount: formattedRecipients.length });
 
-    // Build SMS request with delivery callback
     const callbackUrl = `${SUPABASE_URL}/functions/v1/sms-webhook`;
     
-    // Africa's Talking API call with delivery callback
     const atResponse = await fetch('https://api.africastalking.com/version1/messaging', {
       method: 'POST',
       headers: {
@@ -170,12 +171,9 @@ serve(async (req) => {
         callback: callbackUrl,
       }),
     });
-    
-    console.log('SMS sent with delivery callback:', callbackUrl);
 
     const atResult = await atResponse.json();
 
-    // Log SMS in database (without full message content for privacy)
     for (const recipient of formattedRecipients) {
       await supabase.from('sms_logs').insert({
         user_id: userId,
@@ -195,9 +193,10 @@ serve(async (req) => {
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (error) {
+    const corsHeaders = getCorsHeaders(req);
     console.error('SMS gateway error:', error instanceof Error ? error.message : 'Unknown');
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
+      JSON.stringify({ error: 'An internal error occurred. Please try again.' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

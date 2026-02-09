@@ -1,33 +1,29 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
+// Keep permissive CORS for USSD provider callbacks
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Content-Type': 'text/plain',
 };
 
-// Input sanitization to prevent injection attacks
+// Input sanitization
 function sanitizeInput(input: string): string {
   if (!input || typeof input !== 'string') return '';
-  // Remove any potentially harmful characters, keep only digits, asterisks, and hashes
   return input.replace(/[^0-9*#]/g, '').slice(0, 100);
 }
 
 function sanitizePhoneNumber(phone: string): string {
   if (!phone || typeof phone !== 'string') return '';
-  // Keep only digits and + sign at the start
-  const cleaned = phone.replace(/[^0-9+]/g, '');
-  return cleaned.slice(0, 20);
+  return phone.replace(/[^0-9+]/g, '').slice(0, 20);
 }
 
 function sanitizeSessionId(sessionId: string): string {
   if (!sessionId || typeof sessionId !== 'string') return '';
-  // Allow alphanumeric, hyphens, and underscores only
   return sessionId.replace(/[^a-zA-Z0-9\-_]/g, '').slice(0, 100);
 }
 
-// USSD Menu structure
 const MENUS = {
   main: {
     en: `CON Welcome to MediReach+
@@ -66,7 +62,6 @@ const MENUS = {
   },
 };
 
-// First aid quick tips
 const FIRST_AID_TIPS: Record<string, { en: string; sw: string }> = {
   bleeding: {
     en: `END BLEEDING:
@@ -162,25 +157,17 @@ serve(async (req) => {
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // Parse form data from Africa's Talking
     const formData = await req.formData();
-    const rawSessionId = formData.get('sessionId') as string;
-    const rawPhoneNumber = formData.get('phoneNumber') as string;
-    const rawText = formData.get('text') as string || '';
-
-    // Sanitize all inputs
-    const sessionId = sanitizeSessionId(rawSessionId);
-    const phoneNumber = sanitizePhoneNumber(rawPhoneNumber);
-    const text = sanitizeInput(rawText);
+    const sessionId = sanitizeSessionId(formData.get('sessionId') as string);
+    const phoneNumber = sanitizePhoneNumber(formData.get('phoneNumber') as string);
+    const text = sanitizeInput(formData.get('text') as string || '');
 
     if (!sessionId || !phoneNumber) {
       return new Response('END Invalid request.', { headers: corsHeaders });
     }
 
-    // Log minimal metadata
     console.log('USSD request:', { sessionId: sessionId.slice(0, 8) + '...', inputLength: text.length });
 
-    // Get or create session
     let { data: session } = await supabase
       .from('ussd_sessions')
       .select('*')
@@ -190,12 +177,7 @@ serve(async (req) => {
     if (!session) {
       const { data: newSession } = await supabase
         .from('ussd_sessions')
-        .insert({
-          session_id: sessionId,
-          phone_number: phoneNumber,
-          current_menu: 'main',
-          session_data: { language: 'en' },
-        })
+        .insert({ session_id: sessionId, phone_number: phoneNumber, current_menu: 'main', session_data: { language: 'en' } })
         .select()
         .single();
       session = newSession;
@@ -207,34 +189,19 @@ serve(async (req) => {
 
     let response = '';
 
-    // Handle menu navigation
     if (text === '' || text === '0*0') {
-      // Show main menu
       response = MENUS.main[language];
     } else if (text === '0') {
-      // Language selection
       response = MENUS.language.text;
     } else if (inputs[0] === '0' && inputs.length === 2) {
-      // Set language
       const newLang = lastInput === '1' ? 'en' : 'sw';
-      await supabase
-        .from('ussd_sessions')
-        .update({ session_data: { ...session?.session_data, language: newLang } })
-        .eq('session_id', sessionId);
+      await supabase.from('ussd_sessions').update({ session_data: { ...session?.session_data, language: newLang } }).eq('session_id', sessionId);
       response = MENUS.main[newLang];
     } else if (inputs[0] === '1') {
-      // First Aid menu
       if (inputs.length === 1) {
         response = MENUS.firstAid[language];
       } else {
-        // Show specific first aid tip
-        const tipMap: Record<string, string> = {
-          '1': 'bleeding',
-          '2': 'burns',
-          '3': 'choking',
-          '4': 'fractures',
-          '5': 'heartAttack',
-        };
+        const tipMap: Record<string, string> = { '1': 'bleeding', '2': 'burns', '3': 'choking', '4': 'fractures', '5': 'heartAttack' };
         const tipKey = tipMap[lastInput];
         if (tipKey && FIRST_AID_TIPS[tipKey]) {
           response = FIRST_AID_TIPS[tipKey][language];
@@ -245,12 +212,11 @@ serve(async (req) => {
         }
       }
     } else if (inputs[0] === '2') {
-      // Find nearest hospital
       response = language === 'en'
         ? `END Nearest Hospitals:
 1. Kenyatta National Hospital
    Tel: +254 20 2726300
-   
+
 2. Nairobi Hospital
    Tel: +254 20 2845000
 
@@ -258,13 +224,12 @@ Call 999 for ambulance.`
         : `END Hospitali za Karibu:
 1. Hospitali ya Kenyatta
    Simu: +254 20 2726300
-   
+
 2. Hospitali ya Nairobi
    Simu: +254 20 2845000
 
 Piga 999 kwa ambulensi.`;
     } else if (inputs[0] === '3') {
-      // Emergency alert
       response = language === 'en'
         ? `END EMERGENCY ALERT SENT!
 Your location has been shared.
@@ -283,7 +248,6 @@ Polisi: 999
 Ambulensi: 999
 Zimamoto: 999`;
     } else if (inputs[0] === '4') {
-      // Health profile (simplified)
       response = language === 'en'
         ? `END Your Health Profile:
 To update your profile, use the MediReach+ app or send SMS to our number.
@@ -297,18 +261,11 @@ Kwa dharura, wasifu wako husaidia wahudumu.`;
       response = MENUS.main[language];
     }
 
-    // Update session
-    await supabase
-      .from('ussd_sessions')
-      .update({ updated_at: new Date().toISOString() })
-      .eq('session_id', sessionId);
+    await supabase.from('ussd_sessions').update({ updated_at: new Date().toISOString() }).eq('session_id', sessionId);
 
     return new Response(response, { headers: corsHeaders });
   } catch (error) {
     console.error('USSD handler error:', error instanceof Error ? error.message : 'Unknown');
-    return new Response(
-      'END An error occurred. Please try again.',
-      { headers: corsHeaders }
-    );
+    return new Response('END An error occurred. Please try again.', { headers: corsHeaders });
   }
 });

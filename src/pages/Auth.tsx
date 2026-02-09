@@ -11,6 +11,15 @@ import { useToast } from '@/hooks/use-toast';
 import { Heart, Shield } from 'lucide-react';
 import { loginSchema, signupSchema } from '@/lib/validations';
 
+const ALLOWED_REDIRECTS = ['/', '/dashboard', '/chat', '/emergency', '/profile', '/reports', '/admin', '/onboarding'];
+
+function isValidRedirect(path: string): boolean {
+  if (!path || typeof path !== 'string') return false;
+  if (!path.startsWith('/') || path.startsWith('//')) return false;
+  const basePath = path.split('?')[0].split('#')[0];
+  return ALLOWED_REDIRECTS.includes(basePath);
+}
+
 export default function Auth() {
   const [isLoading, setIsLoading] = useState(false);
   const { signIn, signUp } = useAuth();
@@ -49,7 +58,8 @@ export default function Auth() {
           return;
         }
       }
-      navigate('/');
+      const intended = (window.history.state?.from as string) || '/';
+      navigate(isValidRedirect(intended) ? intended : '/');
     }
   };
 

@@ -1,10 +1,19 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+const ALLOWED_ORIGINS = [
+  'https://id-preview--a195f4d5-59f8-49b0-9a16-0b1c51758426.lovable.app',
+  'https://a195f4d5-59f8-49b0-9a16-0b1c51758426.lovableproject.com',
+];
+
+function getCorsHeaders(req: Request) {
+  const origin = req.headers.get('Origin') || '';
+  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    'Access-Control-Allow-Origin': allowedOrigin,
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+  };
+}
 
 // Rate limiting (in-memory, per function instance)
 const rateLimiter = new Map<string, { count: number; resetAt: number }>();
@@ -34,7 +43,6 @@ function validateChatInput(data: unknown): { valid: boolean; error?: string; par
 
   const body = data as Record<string, unknown>;
   
-  // Validate messages array
   if (!Array.isArray(body.messages)) {
     return { valid: false, error: 'Messages must be an array' };
   }
@@ -63,7 +71,6 @@ function validateChatInput(data: unknown): { valid: boolean; error?: string; par
     }
   }
   
-  // Validate language
   const language = body.language as string || 'en';
   if (language !== 'en' && language !== 'sw') {
     return { valid: false, error: 'Language must be "en" or "sw"' };
@@ -131,6 +138,8 @@ MUUNDO WA JIBU:
 Mwishoni daima jumuisha kanusho: "Hii ni mwongozo wa huduma ya kwanza tu. Kwa dharura za kimatibabu, piga simu 999 au tembelea hospitali ya karibu."`;
 
 serve(async (req) => {
+  const corsHeaders = getCorsHeaders(req);
+
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -148,7 +157,7 @@ serve(async (req) => {
     const authHeader = req.headers.get('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
       return new Response(
-        JSON.stringify({ error: 'Unauthorized - Missing or invalid authorization header' }),
+        JSON.stringify({ error: 'Unauthorized' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -162,7 +171,7 @@ serve(async (req) => {
     
     if (claimsError || !claims?.claims) {
       return new Response(
-        JSON.stringify({ error: 'Unauthorized - Invalid token' }),
+        JSON.stringify({ error: 'Unauthorized' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -191,7 +200,6 @@ serve(async (req) => {
     const { messages, language } = validation.parsed;
     const systemPrompt = language === 'sw' ? SYSTEM_PROMPT_SW : SYSTEM_PROMPT_EN;
 
-    // Log minimal metadata (no sensitive content)
     console.log('AI Chat request:', { userId: userId.slice(0, 8) + '...', messageCount: messages.length, language });
 
     const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
@@ -211,7 +219,6 @@ serve(async (req) => {
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
       console.error('AI gateway error:', response.status);
       
       if (response.status === 429) {
@@ -228,16 +235,17 @@ serve(async (req) => {
         );
       }
       
-      throw new Error(`AI gateway error: ${response.status}`);
+      throw new Error('AI service temporarily unavailable');
     }
 
     return new Response(response.body, {
       headers: { ...corsHeaders, 'Content-Type': 'text/event-stream' },
     });
   } catch (error) {
+    const corsHeaders = getCorsHeaders(req);
     console.error('AI chat error:', error instanceof Error ? error.message : 'Unknown');
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
+      JSON.stringify({ error: 'An internal error occurred. Please try again.' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
