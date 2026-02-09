@@ -1,10 +1,19 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+const ALLOWED_ORIGINS = [
+  'https://id-preview--a195f4d5-59f8-49b0-9a16-0b1c51758426.lovable.app',
+  'https://a195f4d5-59f8-49b0-9a16-0b1c51758426.lovableproject.com',
+];
+
+function getCorsHeaders(req: Request) {
+  const origin = req.headers.get('Origin') || '';
+  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    'Access-Control-Allow-Origin': allowedOrigin,
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+  };
+}
 
 // Rate limiting (in-memory, per function instance)
 const rateLimiter = new Map<string, { count: number; resetAt: number }>();
@@ -44,7 +53,6 @@ function validateEmergencyInput(data: unknown): {
 
   const body = data as Record<string, unknown>;
   
-  // Validate symptoms (required)
   if (typeof body.symptoms !== 'string') {
     return { valid: false, error: 'Symptoms must be a string' };
   }
@@ -58,7 +66,6 @@ function validateEmergencyInput(data: unknown): {
     return { valid: false, error: 'Symptoms description too long (max 1000 characters)' };
   }
   
-  // Validate latitude (optional)
   let latitude: number | undefined;
   if (body.latitude !== undefined) {
     if (typeof body.latitude !== 'number' || isNaN(body.latitude)) {
@@ -70,7 +77,6 @@ function validateEmergencyInput(data: unknown): {
     latitude = body.latitude;
   }
   
-  // Validate longitude (optional)
   let longitude: number | undefined;
   if (body.longitude !== undefined) {
     if (typeof body.longitude !== 'number' || isNaN(body.longitude)) {
@@ -82,7 +88,6 @@ function validateEmergencyInput(data: unknown): {
     longitude = body.longitude;
   }
   
-  // Validate address (optional)
   let address: string | undefined;
   if (body.address !== undefined) {
     if (typeof body.address !== 'string') {
@@ -94,7 +99,6 @@ function validateEmergencyInput(data: unknown): {
     address = body.address.trim();
   }
   
-  // Validate priority (optional, default to 'high')
   const validPriorities = ['low', 'medium', 'high', 'critical'];
   let priority: 'low' | 'medium' | 'high' | 'critical' = 'high';
   if (body.priority !== undefined) {
@@ -108,6 +112,8 @@ function validateEmergencyInput(data: unknown): {
 }
 
 serve(async (req) => {
+  const corsHeaders = getCorsHeaders(req);
+
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -119,7 +125,6 @@ serve(async (req) => {
     const AFRICAS_TALKING_API_KEY = Deno.env.get('AFRICAS_TALKING_API_KEY');
     const AFRICAS_TALKING_USERNAME = Deno.env.get('AFRICAS_TALKING_USERNAME');
 
-    // Validate auth
     const authHeader = req.headers.get('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
       return new Response(
@@ -144,7 +149,6 @@ serve(async (req) => {
 
     const userId = claims.claims.sub as string;
 
-    // Rate limiting (stricter for emergency alerts to prevent abuse)
     if (!checkRateLimit(userId, 5, 60000)) {
       return new Response(
         JSON.stringify({ error: 'Rate limit exceeded. Please wait a moment and try again.' }),
@@ -154,7 +158,6 @@ serve(async (req) => {
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // Parse and validate input
     const rawBody = await req.json();
     const validation = validateEmergencyInput(rawBody);
     
@@ -167,10 +170,8 @@ serve(async (req) => {
 
     const { symptoms, latitude, longitude, address, priority } = validation.parsed;
 
-    // Log minimal metadata (no PII)
     console.log('Emergency alert:', { userId: userId.slice(0, 8) + '...', priority, hasLocation: !!(latitude && longitude) });
 
-    // Create emergency case
     const { data: emergencyCase, error: caseError } = await supabase
       .from('emergency_cases')
       .insert({
@@ -190,7 +191,6 @@ serve(async (req) => {
       throw new Error('Failed to create emergency case');
     }
 
-    // Get user profile and emergency contacts
     const { data: profile } = await supabase
       .from('profiles')
       .select('full_name, phone_number')
@@ -202,7 +202,6 @@ serve(async (req) => {
       .select('name, phone_number')
       .eq('user_id', userId);
 
-    // Log audit
     await supabase.from('audit_logs').insert({
       user_id: userId,
       action: 'emergency_alert_created',
@@ -211,7 +210,6 @@ serve(async (req) => {
       details: { priority, hasLocation: !!(latitude && longitude) },
     });
 
-    // Send SMS to emergency contacts if configured
     if (AFRICAS_TALKING_API_KEY && AFRICAS_TALKING_USERNAME && contacts?.length) {
       const locationText = address || (latitude && longitude ? `${latitude.toFixed(4)}, ${longitude.toFixed(4)}` : 'Unknown');
       const message = `EMERGENCY ALERT from ${profile?.full_name || 'MediReach+ User'}!
@@ -241,7 +239,6 @@ Please check on them immediately or call 999.`;
               }),
             });
 
-            // Log SMS (truncated message for privacy)
             await supabase.from('sms_logs').insert({
               user_id: userId,
               phone_number: formattedPhone,
@@ -258,11 +255,9 @@ Please check on them immediately or call 999.`;
       }
     }
 
-    // Find nearest CHW using location-based assignment
     let assignedChw: { chw_user_id: string; distance_km: number; region: string; city: string } | null = null;
     
     if (latitude && longitude) {
-      // Use the Haversine-based function to find nearest CHW
       const { data: nearbyChws, error: chwError } = await supabase
         .rpc('find_nearest_chw', {
           emergency_lat: latitude,
@@ -273,17 +268,14 @@ Please check on them immediately or call 999.`;
       if (chwError) {
         console.error('Error finding nearest CHW:', chwError.message);
       } else if (nearbyChws && nearbyChws.length > 0) {
-        const nearestChw = nearbyChws[0];
-        assignedChw = nearestChw;
+        assignedChw = nearbyChws[0];
         console.log('Found nearest CHW:', {
-          distance: nearestChw.distance_km.toFixed(2) + ' km',
-          region: nearestChw.region,
-          city: nearestChw.city,
+          distance: nearbyChws[0].distance_km.toFixed(2) + ' km',
+          region: nearbyChws[0].region,
         });
       }
     }
     
-    // Fallback to any active CHW if no location-based match
     if (!assignedChw) {
       const { data: fallbackChws } = await supabase
         .from('chw_assignments')
@@ -294,15 +286,13 @@ Please check on them immediately or call 999.`;
       if (fallbackChws?.length) {
         assignedChw = { 
           chw_user_id: fallbackChws[0].chw_user_id, 
-          distance_km: -1, // Unknown distance
+          distance_km: -1,
           region: fallbackChws[0].region,
           city: fallbackChws[0].city
         };
-        console.log('Using fallback CHW (no location match):', assignedChw.region);
       }
     }
     
-    // Assign CHW to case
     if (assignedChw) {
       const { error: assignError } = await supabase
         .from('emergency_cases')
@@ -315,12 +305,9 @@ Please check on them immediately or call 999.`;
         })
         .eq('id', emergencyCase.id);
       
-      if (assignError) {
-        console.error('Error assigning CHW:', assignError.message);
-      } else {
-        // Send push notification to assigned CHW
+      if (!assignError) {
         try {
-          const notifResponse = await fetch(`${SUPABASE_URL}/functions/v1/send-push-notification`, {
+          await fetch(`${SUPABASE_URL}/functions/v1/send-push-notification`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -331,24 +318,14 @@ Please check on them immediately or call 999.`;
               title: `🚨 Emergency Alert - ${priority.toUpperCase()}`,
               body: `New case: ${symptoms.slice(0, 80)}${symptoms.length > 80 ? '...' : ''}`,
               tag: `emergency-${emergencyCase.id}`,
-              data: {
-                caseId: emergencyCase.id,
-                url: '/dashboard',
-              },
+              data: { caseId: emergencyCase.id, url: '/dashboard' },
             }),
           });
-          
-          if (notifResponse.ok) {
-            console.log('Push notification sent to CHW');
-          } else {
-            console.error('Push notification failed:', await notifResponse.text());
-          }
+          console.log('Push notification sent to CHW');
         } catch (pushError) {
-          console.error('Push notification error:', pushError);
+          console.error('Push notification error');
         }
       }
-    } else {
-      console.warn('No CHW available for assignment');
     }
 
     return new Response(
@@ -361,9 +338,10 @@ Please check on them immediately or call 999.`;
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (error) {
+    const corsHeaders = getCorsHeaders(req);
     console.error('Emergency alert error:', error instanceof Error ? error.message : 'Unknown');
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
+      JSON.stringify({ error: 'An internal error occurred. Please try again.' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

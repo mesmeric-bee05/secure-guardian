@@ -1,4 +1,4 @@
-import { ArrowLeft, RefreshCw } from 'lucide-react';
+import { ArrowLeft, BarChart3, RefreshCw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import LanguageToggle from '@/components/ui/LanguageToggle';
@@ -50,6 +50,14 @@ const DashboardHeader = ({
           <NotificationToggle language={language} />
           <ThemeToggle />
           <LanguageToggle language={language} onToggle={onLanguageChange} />
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => navigate('/reports')}
+            title={language === 'en' ? 'Reports' : 'Ripoti'}
+          >
+            <BarChart3 className="h-5 w-5" />
+          </Button>
           <Button
             variant="ghost"
             size="icon"

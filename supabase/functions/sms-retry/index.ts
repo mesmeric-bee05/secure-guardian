@@ -1,15 +1,26 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+const ALLOWED_ORIGINS = [
+  'https://id-preview--a195f4d5-59f8-49b0-9a16-0b1c51758426.lovable.app',
+  'https://a195f4d5-59f8-49b0-9a16-0b1c51758426.lovableproject.com',
+];
+
+function getCorsHeaders(req: Request) {
+  const origin = req.headers.get('Origin') || '';
+  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    'Access-Control-Allow-Origin': allowedOrigin,
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+  };
+}
 
 const MAX_RETRIES = 3;
 const CONCURRENT_LIMIT = 5;
 
 serve(async (req) => {
+  const corsHeaders = getCorsHeaders(req);
+
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -22,14 +33,13 @@ serve(async (req) => {
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
     if (!AFRICAS_TALKING_API_KEY || !AFRICAS_TALKING_USERNAME) {
-      throw new Error('Africa\'s Talking credentials not configured');
+      throw new Error('SMS provider not configured');
     }
 
-    // Validate authentication
     const authHeader = req.headers.get('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
       return new Response(
-        JSON.stringify({ error: 'Unauthorized - Missing or invalid authorization header' }),
+        JSON.stringify({ error: 'Unauthorized' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -43,14 +53,13 @@ serve(async (req) => {
     
     if (claimsError || !claims?.user) {
       return new Response(
-        JSON.stringify({ error: 'Unauthorized - Invalid token' }),
+        JSON.stringify({ error: 'Unauthorized' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
     const userId = claims.user.id;
 
-    // Check if user is admin using service role
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
     
     const { data: isAdmin } = await supabase.rpc('is_admin', { _user_id: userId });
@@ -62,15 +71,12 @@ serve(async (req) => {
       );
     }
 
-    // Parse request body
     const body = await req.json();
     const { sms_log_ids, retry_all_failed } = body;
 
-    // Determine which messages to retry
     let targetIds: string[] = [];
     
     if (retry_all_failed === true) {
-      // Fetch all failed messages that haven't exceeded max retries
       const { data: failedLogs, error: fetchAllError } = await supabase
         .from('sms_logs')
         .select('id')
@@ -87,12 +93,7 @@ serve(async (req) => {
       
       if (targetIds.length === 0) {
         return new Response(
-          JSON.stringify({ 
-            success: true, 
-            message: 'No failed messages to retry',
-            results: [],
-            summary: { attempted: 0, succeeded: 0, failed: 0 }
-          }),
+          JSON.stringify({ success: true, message: 'No failed messages to retry', results: [], summary: { attempted: 0, succeeded: 0, failed: 0 } }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
@@ -112,7 +113,6 @@ serve(async (req) => {
       );
     }
 
-    // Fetch the failed SMS logs
     const { data: smsLogs, error: fetchError } = await supabase
       .from('sms_logs')
       .select('*')
@@ -131,11 +131,9 @@ serve(async (req) => {
       );
     }
 
-    // Process SMS with concurrency limiting
     const results: { id: string; success: boolean; message: string }[] = [];
     const callbackUrl = `${SUPABASE_URL}/functions/v1/sms-webhook`;
 
-    // Process in batches for concurrency control
     for (let i = 0; i < smsLogs.length; i += CONCURRENT_LIMIT) {
       const batch = smsLogs.slice(i, i + CONCURRENT_LIMIT);
       
@@ -143,20 +141,12 @@ serve(async (req) => {
         const currentRetryCount = (sms.retry_count || 0) + 1;
         
         if (currentRetryCount > MAX_RETRIES) {
-          return {
-            id: sms.id,
-            success: false,
-            message: `Maximum retry attempts (${MAX_RETRIES}) exceeded`,
-          };
+          return { id: sms.id, success: false, message: `Maximum retry attempts (${MAX_RETRIES}) exceeded` };
         }
 
-        // Small delay between concurrent requests
         await new Promise(resolve => setTimeout(resolve, 200 * (i % CONCURRENT_LIMIT)));
 
-        console.log(`Retrying SMS ${sms.id} (attempt ${currentRetryCount}/${MAX_RETRIES})`);
-
         try {
-          // Send SMS via Africa's Talking
           const atResponse = await fetch('https://api.africastalking.com/version1/messaging', {
             method: 'POST',
             headers: {
@@ -177,7 +167,6 @@ serve(async (req) => {
           const recipient = atResult.SMSMessageData?.Recipients?.[0];
           const newStatus = recipient?.status || 'sent';
 
-          // Update the original SMS log
           await supabase
             .from('sms_logs')
             .update({
@@ -189,72 +178,49 @@ serve(async (req) => {
             })
             .eq('id', sms.id);
 
-          // Log audit entry
           await supabase.from('audit_logs').insert({
             user_id: userId,
             action: 'sms_retry',
             resource_type: 'sms_logs',
             resource_id: sms.id,
-            details: {
-              retry_count: currentRetryCount,
-              new_status: newStatus,
-              phone_number_masked: sms.phone_number.slice(0, 4) + '****',
-            },
+            details: { retry_count: currentRetryCount, new_status: newStatus },
           });
 
-          return {
-            id: sms.id,
-            success: true,
-            message: `Retry ${currentRetryCount} sent successfully`,
-          };
-
+          return { id: sms.id, success: true, message: `Retry ${currentRetryCount} sent successfully` };
         } catch (retryError) {
-          console.error(`Retry failed for SMS ${sms.id}:`, retryError);
+          console.error(`Retry failed for SMS ${sms.id}`);
 
-          // Update with failure
           await supabase
             .from('sms_logs')
             .update({
               retry_count: currentRetryCount,
               last_retry_at: new Date().toISOString(),
-              failure_reason: retryError instanceof Error ? retryError.message : 'Unknown error',
+              failure_reason: 'Retry failed',
             })
             .eq('id', sms.id);
 
-          return {
-            id: sms.id,
-            success: false,
-            message: `Retry ${currentRetryCount} failed: ${retryError instanceof Error ? retryError.message : 'Unknown error'}`,
-          };
+          return { id: sms.id, success: false, message: `Retry ${currentRetryCount} failed` };
         }
       }));
 
       results.push(...batchResults);
     }
 
-    console.log('SMS retry completed:', { 
-      userId: userId.slice(0, 8) + '...', 
-      attempted: smsLogs.length,
-      succeeded: results.filter(r => r.success).length,
-    });
+    console.log('SMS retry completed:', { userId: userId.slice(0, 8) + '...', attempted: smsLogs.length, succeeded: results.filter(r => r.success).length });
 
     return new Response(
       JSON.stringify({ 
-        success: true, 
-        results,
-        summary: {
-          attempted: results.length,
-          succeeded: results.filter(r => r.success).length,
-          failed: results.filter(r => !r.success).length,
-        },
+        success: true, results,
+        summary: { attempted: results.length, succeeded: results.filter(r => r.success).length, failed: results.filter(r => !r.success).length },
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
   } catch (error) {
+    const corsHeaders = getCorsHeaders(req);
     console.error('SMS retry error:', error instanceof Error ? error.message : 'Unknown');
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
+      JSON.stringify({ error: 'An internal error occurred. Please try again.' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

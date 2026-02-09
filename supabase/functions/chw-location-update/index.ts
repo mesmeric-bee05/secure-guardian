@@ -1,16 +1,27 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+const ALLOWED_ORIGINS = [
+  'https://id-preview--a195f4d5-59f8-49b0-9a16-0b1c51758426.lovable.app',
+  'https://a195f4d5-59f8-49b0-9a16-0b1c51758426.lovableproject.com',
+];
+
+function getCorsHeaders(req: Request) {
+  const origin = req.headers.get('Origin') || '';
+  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    'Access-Control-Allow-Origin': allowedOrigin,
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+  };
+}
 
 // Rate limiting: track last update time per CHW
 const lastUpdateTimes = new Map<string, number>();
-const RATE_LIMIT_MS = 30000; // 30 seconds minimum between updates
+const RATE_LIMIT_MS = 30000;
 
 serve(async (req) => {
+  const corsHeaders = getCorsHeaders(req);
+
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -20,11 +31,10 @@ serve(async (req) => {
     const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-    // Validate authentication
     const authHeader = req.headers.get('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
       return new Response(
-        JSON.stringify({ error: 'Unauthorized - Missing authorization header' }),
+        JSON.stringify({ error: 'Unauthorized' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -38,17 +48,14 @@ serve(async (req) => {
     
     if (claimsError || !claims?.user) {
       return new Response(
-        JSON.stringify({ error: 'Unauthorized - Invalid token' }),
+        JSON.stringify({ error: 'Unauthorized' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
     const userId = claims.user.id;
-
-    // Use service role for database operations
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // Verify user is a CHW
     const { data: isCHW } = await supabase.rpc('is_chw', { _user_id: userId });
     
     if (!isCHW) {
@@ -58,48 +65,34 @@ serve(async (req) => {
       );
     }
 
-    // Rate limiting check
     const lastUpdate = lastUpdateTimes.get(userId);
     const now = Date.now();
     
     if (lastUpdate && (now - lastUpdate) < RATE_LIMIT_MS) {
       const waitTime = Math.ceil((RATE_LIMIT_MS - (now - lastUpdate)) / 1000);
       return new Response(
-        JSON.stringify({ 
-          error: `Rate limited - Please wait ${waitTime} seconds`,
-          wait_seconds: waitTime 
-        }),
+        JSON.stringify({ error: `Rate limited - Please wait ${waitTime} seconds`, wait_seconds: waitTime }),
         { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // Parse request body
     const body = await req.json();
     const { latitude, longitude } = body;
 
-    // Validate GPS coordinates
     if (typeof latitude !== 'number' || typeof longitude !== 'number') {
       return new Response(
-        JSON.stringify({ error: 'Invalid coordinates - latitude and longitude must be numbers' }),
+        JSON.stringify({ error: 'Invalid coordinates' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    if (latitude < -90 || latitude > 90) {
+    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
       return new Response(
-        JSON.stringify({ error: 'Invalid latitude - must be between -90 and 90' }),
+        JSON.stringify({ error: 'Coordinates out of range' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    if (longitude < -180 || longitude > 180) {
-      return new Response(
-        JSON.stringify({ error: 'Invalid longitude - must be between -180 and 180' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Update CHW location
     const { data: assignment, error: updateError } = await supabase
       .from('chw_assignments')
       .update({
@@ -116,7 +109,7 @@ serve(async (req) => {
       
       if (updateError.code === 'PGRST116') {
         return new Response(
-          JSON.stringify({ error: 'No CHW assignment found for this user' }),
+          JSON.stringify({ error: 'No CHW assignment found' }),
           { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
@@ -124,36 +117,29 @@ serve(async (req) => {
       throw new Error('Failed to update location');
     }
 
-    // Update rate limit tracking
     lastUpdateTimes.set(userId, now);
 
-    // Clean up old entries (older than 1 hour)
     const oneHourAgo = now - 3600000;
     for (const [key, time] of lastUpdateTimes.entries()) {
-      if (time < oneHourAgo) {
-        lastUpdateTimes.delete(key);
-      }
+      if (time < oneHourAgo) lastUpdateTimes.delete(key);
     }
 
-    console.log(`CHW location updated: ${userId.slice(0, 8)}... -> (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`);
+    console.log(`CHW location updated: ${userId.slice(0, 8)}...`);
 
     return new Response(
       JSON.stringify({ 
         success: true, 
         message: 'Location updated successfully',
-        location: {
-          latitude: assignment.latitude,
-          longitude: assignment.longitude,
-          updated_at: assignment.last_location_update,
-        }
+        location: { latitude: assignment.latitude, longitude: assignment.longitude, updated_at: assignment.last_location_update },
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
   } catch (error) {
+    const corsHeaders = getCorsHeaders(req);
     console.error('CHW location update error:', error instanceof Error ? error.message : 'Unknown');
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
+      JSON.stringify({ error: 'An internal error occurred. Please try again.' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

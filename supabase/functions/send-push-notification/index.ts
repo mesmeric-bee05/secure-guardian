@@ -1,24 +1,23 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
-};
+const ALLOWED_ORIGINS = [
+  'https://id-preview--a195f4d5-59f8-49b0-9a16-0b1c51758426.lovable.app',
+  'https://a195f4d5-59f8-49b0-9a16-0b1c51758426.lovableproject.com',
+];
 
-// Web Push helper: encode for VAPID
-function base64UrlDecode(str: string): Uint8Array {
-  str = str.replace(/-/g, '+').replace(/_/g, '/');
-  while (str.length % 4) str += '=';
-  const binary = atob(str);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
+function getCorsHeaders(req: Request) {
+  const origin = req.headers.get('Origin') || '';
+  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    'Access-Control-Allow-Origin': allowedOrigin,
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+  };
 }
 
 serve(async (req) => {
+  const corsHeaders = getCorsHeaders(req);
+
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
@@ -28,6 +27,24 @@ serve(async (req) => {
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const VAPID_PUBLIC_KEY = Deno.env.get('VAPID_PUBLIC_KEY');
     const VAPID_PRIVATE_KEY = Deno.env.get('VAPID_PRIVATE_KEY');
+
+    // Auth: Only allow service-role calls (internal use from emergency-alert)
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader?.startsWith('Bearer ')) {
+      return new Response(
+        JSON.stringify({ error: 'Unauthorized' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const token = authHeader.replace('Bearer ', '');
+    if (token !== SUPABASE_SERVICE_ROLE_KEY) {
+      // Not a service-role call — reject
+      return new Response(
+        JSON.stringify({ error: 'Forbidden - Internal use only' }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
       console.error('VAPID keys not configured');
@@ -49,7 +66,6 @@ serve(async (req) => {
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // Get user's push subscriptions
     const { data: subscriptions, error: subError } = await supabase
       .from('push_subscriptions')
       .select('*')
@@ -68,8 +84,6 @@ serve(async (req) => {
       );
     }
 
-    console.log(`Sending push notification to ${subscriptions.length} subscription(s) for user ${user_id.slice(0, 8)}...`);
-
     const payload = JSON.stringify({
       title,
       body: notifBody,
@@ -84,34 +98,23 @@ serve(async (req) => {
 
     for (const sub of subscriptions) {
       try {
-        // Use simple fetch-based push for now (Web Push protocol)
-        // The subscription endpoint already handles the push delivery
         const response = await fetch(sub.endpoint, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/octet-stream',
-            'TTL': '86400',
-          },
+          headers: { 'Content-Type': 'application/octet-stream', 'TTL': '86400' },
           body: payload,
         });
 
         if (response.ok || response.status === 201) {
           sent++;
-          console.log('Push notification sent successfully');
         } else if (response.status === 410) {
-          // Subscription expired, clean up
-          console.log('Subscription expired, removing:', sub.id);
-          await supabase
-            .from('push_subscriptions')
-            .delete()
-            .eq('id', sub.id);
+          await supabase.from('push_subscriptions').delete().eq('id', sub.id);
           failed++;
         } else {
-          console.error('Push delivery failed:', response.status, await response.text());
+          console.error('Push delivery failed:', response.status);
           failed++;
         }
       } catch (pushError) {
-        console.error('Push error for subscription:', sub.id, pushError);
+        console.error('Push error for subscription:', sub.id);
         failed++;
       }
     }
@@ -123,9 +126,10 @@ serve(async (req) => {
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (error) {
+    const corsHeaders = getCorsHeaders(req);
     console.error('Send push notification error:', error instanceof Error ? error.message : 'Unknown');
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
+      JSON.stringify({ error: 'An internal error occurred.' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
