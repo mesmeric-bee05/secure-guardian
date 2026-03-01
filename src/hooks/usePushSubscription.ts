@@ -12,9 +12,9 @@ export function usePushSubscription() {
       if (!user) return;
 
       const registration = await navigator.serviceWorker?.ready;
-      if (!registration?.pushManager) return;
+      if (!registration || !('pushManager' in registration)) return;
 
-      const subscription = await registration.pushManager.getSubscription();
+      const subscription = await (registration as any).pushManager.getSubscription();
       if (!subscription) {
         setIsSubscribed(false);
         return;
@@ -49,14 +49,15 @@ export function usePushSubscription() {
       if (permission !== 'granted') return false;
 
       const registration = await navigator.serviceWorker?.ready;
-      if (!registration?.pushManager) throw new Error('Push not supported');
+      if (!registration || !('pushManager' in registration)) throw new Error('Push not supported');
 
+      const pm = (registration as any).pushManager;
       // Get VAPID public key from env
       const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
       
-      let subscription = await registration.pushManager.getSubscription();
+      let subscription = await pm.getSubscription();
       if (!subscription && vapidKey) {
-        subscription = await registration.pushManager.subscribe({
+        subscription = await pm.subscribe({
           userVisibleOnly: true,
           applicationServerKey: vapidKey,
         });
@@ -103,7 +104,9 @@ export function usePushSubscription() {
       if (!user) return;
 
       const registration = await navigator.serviceWorker?.ready;
-      const subscription = await registration?.pushManager?.getSubscription();
+      const subscription = registration && 'pushManager' in registration
+        ? await (registration as any).pushManager.getSubscription()
+        : null;
       
       if (subscription) {
         await subscription.unsubscribe();
