@@ -144,7 +144,7 @@ const Dashboard = () => {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-background">
+    <div className="flex flex-col min-h-screen bg-background">
       <DashboardHeader
         language={language}
         onLanguageChange={setLanguage}

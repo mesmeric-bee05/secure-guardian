@@ -31,17 +31,21 @@ const COLORS = [
   'hsl(280, 70%, 50%)',
 ];
 
-export default function Reports() {
+interface ReportsProps {
+  embedded?: boolean;
+}
+
+export default function Reports({ embedded = false }: ReportsProps) {
   const navigate = useNavigate();
   const { isChw, isAdmin, loading: authLoading } = useAuth();
   const [cases, setCases] = useState<CaseData[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!authLoading && !isChw() && !isAdmin()) {
+    if (!embedded && !authLoading && !isChw() && !isAdmin()) {
       navigate('/');
     }
-  }, [authLoading, isChw, isAdmin, navigate]);
+  }, [embedded, authLoading, isChw, isAdmin, navigate]);
 
   useEffect(() => {
     async function fetchCases() {
@@ -136,25 +140,27 @@ export default function Reports() {
   const resolutionRate = cases.length ? Math.round(resolvedCount / cases.length * 100) : 0;
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-50 border-b border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
-        <div className="flex items-center gap-3 px-4 py-3">
-          <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
-            <ArrowLeft className="w-5 h-5" />
-          </Button>
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-              <BarChart3 className="w-4 h-4 text-primary-foreground" />
-            </div>
-            <div>
-              <h1 className="text-lg font-bold text-foreground">Reports & Analytics</h1>
-              <p className="text-xs text-muted-foreground">Health data insights</p>
+    <div className={embedded ? '' : 'min-h-screen bg-background'}>
+      {!embedded && (
+        <header className="sticky top-0 z-50 border-b border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
+          <div className="flex items-center gap-3 px-4 py-3">
+            <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+              <ArrowLeft className="w-5 h-5" />
+            </Button>
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
+                <BarChart3 className="w-4 h-4 text-primary-foreground" />
+              </div>
+              <div>
+                <h1 className="text-lg font-bold text-foreground">Reports & Analytics</h1>
+                <p className="text-xs text-muted-foreground">Health data insights</p>
+              </div>
             </div>
           </div>
-        </div>
-      </header>
+        </header>
+      )}
 
-      <main className="p-4 lg:p-6 space-y-6 max-w-7xl mx-auto">
+      <main className={`${embedded ? 'space-y-6' : 'p-4 lg:p-6 space-y-6 max-w-7xl mx-auto'}`}>
         {/* Summary Cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Card>
