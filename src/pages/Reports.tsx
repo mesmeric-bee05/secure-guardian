@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, BarChart3, TrendingUp, Users, Clock, Activity, MapPin } from 'lucide-react';
+import { ArrowLeft, BarChart3, TrendingUp, Users, Clock, Activity } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { supabase } from '@/integrations/supabase/client';
@@ -11,6 +11,8 @@ import {
   PieChart, Pie, Cell, LineChart, Line, Legend,
 } from 'recharts';
 import { CSVExportButton } from '@/components/reports/CSVExportButton';
+import { DateRangeFilter, DateRange } from '@/components/reports/DateRangeFilter';
+import { subDays, eachDayOfInterval, format, isWithinInterval, startOfDay, endOfDay } from 'date-fns';
 
 interface CaseData {
   id: string;
@@ -39,8 +41,12 @@ interface ReportsProps {
 export default function Reports({ embedded = false }: ReportsProps) {
   const navigate = useNavigate();
   const { isChw, isAdmin, loading: authLoading } = useAuth();
-  const [cases, setCases] = useState<CaseData[]>([]);
+  const [allCases, setAllCases] = useState<CaseData[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dateRange, setDateRange] = useState<DateRange>({
+    from: subDays(new Date(), 30),
+    to: new Date(),
+  });
 
   useEffect(() => {
     if (!embedded && !authLoading && !isChw() && !isAdmin()) {
@@ -54,24 +60,39 @@ export default function Reports({ embedded = false }: ReportsProps) {
         .from('emergency_cases')
         .select('id, symptoms, priority, status, created_at, resolved_at, assigned_chw_id, location_address')
         .order('created_at', { ascending: false });
-      setCases(data || []);
+      setAllCases(data || []);
       setLoading(false);
     }
     fetchCases();
   }, []);
 
-  const trendData = useMemo(() => {
-    const last30 = Array.from({ length: 30 }, (_, i) => {
-      const d = new Date();
-      d.setDate(d.getDate() - (29 - i));
-      return d.toISOString().split('T')[0];
+  // Filter cases by date range
+  const cases = useMemo(() => {
+    return allCases.filter(c => {
+      if (!c.created_at) return false;
+      const caseDate = new Date(c.created_at);
+      return isWithinInterval(caseDate, {
+        start: startOfDay(dateRange.from),
+        end: endOfDay(dateRange.to),
+      });
     });
-    return last30.map(date => ({
-      date: date.slice(5),
-      cases: cases.filter(c => c.created_at?.startsWith(date)).length,
-      resolved: cases.filter(c => c.resolved_at?.startsWith(date)).length,
-    }));
-  }, [cases]);
+  }, [allCases, dateRange]);
+
+  const trendData = useMemo(() => {
+    const days = eachDayOfInterval({ start: dateRange.from, end: dateRange.to });
+    // Limit to max 60 data points for readability
+    const step = Math.max(1, Math.floor(days.length / 60));
+    const sampledDays = days.filter((_, i) => i % step === 0);
+    
+    return sampledDays.map(day => {
+      const dateStr = format(day, 'yyyy-MM-dd');
+      return {
+        date: format(day, 'MMM d'),
+        cases: cases.filter(c => c.created_at?.startsWith(dateStr)).length,
+        resolved: cases.filter(c => c.resolved_at?.startsWith(dateStr)).length,
+      };
+    });
+  }, [cases, dateRange]);
 
   const resolutionData = useMemo(() => {
     const statuses = ['pending', 'assigned', 'in_progress', 'resolved', 'escalated'];
@@ -162,11 +183,9 @@ export default function Reports({ embedded = false }: ReportsProps) {
       )}
 
       <main className={`${embedded ? 'space-y-6' : 'p-4 lg:p-6 space-y-6 max-w-7xl mx-auto'}`}>
-        {/* Export + Summary */}
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-foreground">
-            {embedded ? '' : 'Overview'}
-          </h2>
+        {/* Filters + Export */}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <DateRangeFilter dateRange={dateRange} onDateRangeChange={setDateRange} />
           <CSVExportButton cases={cases} />
         </div>
 
@@ -212,22 +231,22 @@ export default function Reports({ embedded = false }: ReportsProps) {
           </Card>
         </div>
 
-        {/* 30-Day Trends */}
+        {/* Trends */}
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">30-Day Case Trends</CardTitle>
+            <CardTitle className="text-base">Case Trends</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={trendData}>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                  <XAxis dataKey="date" tick={{ fontSize: 11 }} className="fill-muted-foreground" />
+                  <XAxis dataKey="date" tick={{ fontSize: 10 }} className="fill-muted-foreground" interval="preserveStartEnd" />
                   <YAxis tick={{ fontSize: 11 }} className="fill-muted-foreground" />
                   <Tooltip />
                   <Legend />
-                  <Line type="monotone" dataKey="cases" stroke="hsl(217, 91%, 50%)" strokeWidth={2} name="New Cases" />
-                  <Line type="monotone" dataKey="resolved" stroke="hsl(142, 71%, 45%)" strokeWidth={2} name="Resolved" />
+                  <Line type="monotone" dataKey="cases" stroke="hsl(217, 91%, 50%)" strokeWidth={2} name="New Cases" dot={false} />
+                  <Line type="monotone" dataKey="resolved" stroke="hsl(142, 71%, 45%)" strokeWidth={2} name="Resolved" dot={false} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -235,7 +254,6 @@ export default function Reports({ embedded = false }: ReportsProps) {
         </Card>
 
         <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
-          {/* Status Distribution */}
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-base">Case Status Distribution</CardTitle>
@@ -256,7 +274,6 @@ export default function Reports({ embedded = false }: ReportsProps) {
             </CardContent>
           </Card>
 
-          {/* Priority Breakdown */}
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-base">Cases by Priority</CardTitle>
@@ -281,7 +298,6 @@ export default function Reports({ embedded = false }: ReportsProps) {
           </Card>
         </div>
 
-        {/* Top Symptoms */}
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Most Reported Symptoms</CardTitle>
@@ -301,7 +317,6 @@ export default function Reports({ embedded = false }: ReportsProps) {
           </CardContent>
         </Card>
 
-        {/* CHW Performance */}
         {chwPerformance.length > 0 && (
           <Card>
             <CardHeader className="pb-2">
