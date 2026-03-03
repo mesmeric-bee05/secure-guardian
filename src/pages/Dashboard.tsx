@@ -175,8 +175,8 @@ const Dashboard = () => {
       />
 
       <div className="flex-1 overflow-auto">
-        <Tabs defaultValue="cases" className="h-full">
-          <div className="px-4 pt-2">
+        <Tabs defaultValue="cases" className="flex flex-col h-full">
+          <div className="px-4 pt-2 shrink-0">
             <TabsList className="grid w-full max-w-md grid-cols-2">
               <TabsTrigger value="cases">
                 {language === 'en' ? 'Cases' : 'Kesi'}
@@ -187,7 +187,7 @@ const Dashboard = () => {
             </TabsList>
           </div>
 
-          <TabsContent value="cases" className="h-[calc(100%-48px)] mt-0">
+          <TabsContent value="cases" className="flex-1 mt-0 overflow-auto">
             <CasesList
               cases={cases}
               loading={loading}
@@ -196,12 +196,12 @@ const Dashboard = () => {
             />
           </TabsContent>
 
-          <TabsContent value="analytics" className="p-4 space-y-4 overflow-auto">
-            <div className="grid gap-4 md:grid-cols-2">
+          <TabsContent value="analytics" className="flex-1 mt-0 overflow-auto p-4 space-y-4">
+            <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
               <CaseTrendsChart cases={cases} language={language} />
               <PriorityDistributionChart cases={cases} language={language} />
             </div>
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
               <ResponseTimeChart cases={cases} language={language} />
               <StatusOverviewChart cases={cases} language={language} />
             </div>
