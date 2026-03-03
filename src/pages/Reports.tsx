@@ -10,6 +10,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, Legend,
 } from 'recharts';
+import { CSVExportButton } from '@/components/reports/CSVExportButton';
 
 interface CaseData {
   id: string;
@@ -161,6 +162,14 @@ export default function Reports({ embedded = false }: ReportsProps) {
       )}
 
       <main className={`${embedded ? 'space-y-6' : 'p-4 lg:p-6 space-y-6 max-w-7xl mx-auto'}`}>
+        {/* Export + Summary */}
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-foreground">
+            {embedded ? '' : 'Overview'}
+          </h2>
+          <CSVExportButton cases={cases} />
+        </div>
+
         {/* Summary Cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Card>
@@ -225,7 +234,7 @@ export default function Reports({ embedded = false }: ReportsProps) {
           </CardContent>
         </Card>
 
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
           {/* Status Distribution */}
           <Card>
             <CardHeader className="pb-2">
@@ -235,7 +244,7 @@ export default function Reports({ embedded = false }: ReportsProps) {
               <div className="h-56">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
-                    <Pie data={resolutionData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} dataKey="value" label={({ name, value }) => `${name}: ${value}`}>
+                    <Pie data={resolutionData} cx="50%" cy="50%" innerRadius={40} outerRadius={70} dataKey="value" label={({ name, value }) => `${name}: ${value}`}>
                       {resolutionData.map((_, i) => (
                         <Cell key={i} fill={COLORS[i % COLORS.length]} />
                       ))}
@@ -278,12 +287,12 @@ export default function Reports({ embedded = false }: ReportsProps) {
             <CardTitle className="text-base">Most Reported Symptoms</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="h-56">
+            <div className="h-64 sm:h-56">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={topSymptoms} layout="vertical">
+                <BarChart data={topSymptoms} layout="vertical" margin={{ left: 0, right: 10 }}>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                   <XAxis type="number" tick={{ fontSize: 11 }} />
-                  <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11 }} />
+                  <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 10 }} />
                   <Tooltip />
                   <Bar dataKey="count" fill="hsl(217, 91%, 50%)" radius={[0, 4, 4, 0]} />
                 </BarChart>
