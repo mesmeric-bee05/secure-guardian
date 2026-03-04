@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -23,6 +24,16 @@ const queryClient = new QueryClient();
 const AppContent = () => {
   // Initialize service worker for PWA functionality
   useServiceWorker('en');
+
+  // Global unhandled rejection handler
+  useEffect(() => {
+    const handler = (event: PromiseRejectionEvent) => {
+      console.error('Unhandled promise rejection:', event.reason);
+      event.preventDefault();
+    };
+    window.addEventListener('unhandledrejection', handler);
+    return () => window.removeEventListener('unhandledrejection', handler);
+  }, []);
 
   return (
     <>
