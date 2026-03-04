@@ -1,58 +1,107 @@
 
 
-# Plan: Update Remaining Protocol Categories with Specific Reference Books
+# Plan: Tanzania Data Expansion, Duplicate Cleanup, Protocol Addition & Dashboard Fix
 
-## Verification Results
+## Current State Assessment
 
-**Protocol Cards (Home Page):** Verified working correctly. The Heart Attack protocol modal displays:
-- Embedded YouTube CPR tutorial video
-- Steps to Follow with numbered instructions
-- Red Flags and When to Go to Hospital sections
-- Category-specific reference books (Where There Is No Doctor, CPR/AED Handbook, AHA Guidelines)
-- Read Aloud and Call Emergency buttons
+**Database status:**
+- 5 health facilities (3 Nairobi, 1 Dar es Salaam, 1 Mombasa) -- only 1 Tanzania facility
+- 19 first aid protocols with some duplicates (e.g., "Severe Bleeding" appears in both `bleeding` and `trauma` categories; "Burns Treatment" twice; "Choking" in `breathing` and `choking`; "Heart Attack" in `cardiac` and `heart_attack`; "Fractures" in `fractures` and `trauma`)
+- 1 user with all 3 roles (user, chw, admin)
+- 2 emergency cases, 3 CHW assignments (Kenya-based)
+- CHW regions list in `CHWManagementTab.tsx` is Kenya-only
 
-**Reports Page:** Route and code confirmed working. Requires CHW/Admin authentication, which is correctly enforced. The page includes 30-day trend charts, status distribution pie chart, priority bar chart, top symptoms, and CHW performance table -- all rendering with Recharts.
+**CHW Dashboard issue:** The Dashboard page at `/dashboard` should work for CHW/admin users. The `useRealtimeCases` hook fetches cases and subscribes to realtime. Potential issues:
+1. RLS policies use `RESTRICTIVE` (not permissive) -- all policies are restrictive, meaning they must ALL pass. The "Deny anonymous access" policy with `USING (false)` blocks anonymous users entirely, but for authenticated users with the right role it should work since they match at least one other restrictive policy. Actually, wait -- **restrictive policies are AND-ed together**. The "Deny anonymous" policy targets `public` role. Let me re-check... The policies shown say `Permissive: No` which means they're restrictive. In PostgreSQL, restrictive policies must ALL pass. If "Deny anonymous access" has `USING (false)` and is restrictive, it would block ALL access including authenticated users. This is likely the root cause of the CHW Dashboard not working.
 
-## Data Update: Remaining Protocol Categories
+Let me verify -- the "Deny anonymous" policies are applied to role `public` (all users), with `USING (false)`. If restrictive, this would deny everyone. This is almost certainly the bug.
 
-Seven categories still have generic "First Aid Manual" by DK/Red Cross as their second book. Each will be updated with curated, condition-specific references:
+## Phase 1: Fix RLS Policies (Critical - CHW Dashboard Fix)
 
-### 1. Allergic Reactions
-- Keep: Where There Is No Doctor
-- Add: *Anaphylaxis in Schools & Other Settings* (ACAAI) and *Emergency Medicine Manual* (Tintinalli)
-- Video already set: https://www.youtube.com/watch?v=CH7lMxOuIHg
+The "Deny anonymous access" policies on `emergency_cases`, `profiles`, `user_roles`, `chw_assignments`, `chat_sessions`, `chat_messages`, `sms_logs`, `audit_logs`, `emergency_contacts`, and `push_subscriptions` are marked as restrictive (`Permissive: No`). When restrictive, ALL policies must pass. Since `USING (false)` always fails, no one can access these tables.
 
-### 2. Drowning
-- Keep: Where There Is No Doctor
-- Add: *Drowning Prevention and Rescue* (Royal Life Saving) and *Lifeguarding Manual* (American Red Cross)
-- Video already set: https://www.youtube.com/watch?v=FHfbSjRDlvE
+**Fix:** Drop all "Deny anonymous access" restrictive policies and replace with proper `anon` role denial using permissive policies, or simply remove them since the other policies already target `authenticated` role only.
 
-### 3. Electrical Shock
-- Keep: Where There Is No Doctor
-- Add: *Electrical Injuries: Medical and Bioengineering Aspects* (Cambridge) and *Emergency Care in the Streets* (AAOS)
-- Video already set: https://www.youtube.com/watch?v=rN9ms0ygGB0
+**Database migration:**
+- Drop all "Deny anonymous access" restrictive policies across all affected tables
+- The existing permissive policies targeting `authenticated` already provide proper access control
 
-### 4. Heatstroke
-- Keep: Where There Is No Doctor
-- Add: *Wilderness Medicine* (Paul Auerbach) and *Heat Stroke: A Clinical Guide* (Springer)
-- Video already set: https://www.youtube.com/watch?v=NJ1YCnbV0qU
+## Phase 2: Insert Tanzania Health Facilities (~15 facilities)
 
-### 5. Poisoning
-- Keep: Where There Is No Doctor
-- Add: *Goldfrank's Toxicologic Emergencies* (McGraw-Hill) and *Poisoning & Drug Overdose* (Olson)
-- Video already set: https://www.youtube.com/watch?v=FPrMnVJoiWQ
+Add verified Tanzania facilities covering major cities:
+- Dar es Salaam: Muhimbili (already exists), Aga Khan DSM, Temeke Regional, Amana Regional, Mwananyamala Regional
+- Dodoma: Dodoma Regional, Benjamin Mkapa Hospital  
+- Arusha: Mount Meru Regional, KCMC (Moshi)
+- Mwanza: Bugando Medical Centre, Sekou Toure Regional
+- Mbeya: Mbeya Zonal Referral
+- Tanga: Bombo Regional
+- Zanzibar: Mnazi Mmoja Hospital
+- Morogoro: Morogoro Regional
 
-### 6. Seizure
-- Keep: Where There Is No Doctor
-- Add: *Epilepsy: A Comprehensive Textbook* (Lippincott) and *Seizure First Aid* (Epilepsy Foundation)
-- Video already set: https://www.youtube.com/watch?v=Ovsw7tdneqE
+Each with real coordinates, phone numbers, services, and `is_verified = true`.
 
-### 7. Snakebite
-- Keep: Where There Is No Doctor
-- Add: *Snakebites in Africa* (WHO Guidelines) and *Venomous Snakes and Snakebite in East Africa* (Spawls)
-- Video already set: https://www.youtube.com/watch?v=bxR-2jMe1HA
+## Phase 3: Clean Duplicate Protocols & Add New Ones
+
+**Clean duplicates** (delete by ID):
+- Remove duplicate "Severe Bleeding" in `trauma` category (id: `8746d13f...`)
+- Remove duplicate "Burns Treatment" without severity (id: `18ec48a0...`)
+- Remove duplicate "Fractures" in `trauma` category (id: `ae93a0dd...`)
+
+**Add ~10 new protocols** covering gaps:
+1. Malaria First Response (common in Tanzania)
+2. Dehydration & Diarrhea Management
+3. Wound Cleaning & Infection Prevention
+4. Fainting / Loss of Consciousness
+5. Asthma Attack
+6. Eye Injuries
+7. Nosebleed Treatment
+8. Insect/Scorpion Stings
+9. Diabetic Emergency
+10. Child Fever Management
+
+Each with bilingual EN/SW content, structured steps, red flags, and severity levels.
+
+## Phase 4: Code Fixes
+
+1. **Update CHW regions list** in `CHWManagementTab.tsx` to include Tanzania regions (Dar es Salaam, Dodoma, Arusha, Mwanza, Mbeya, Tanga, Zanzibar, Morogoro, etc.)
+
+2. **Fix `CaseDetailModal` state reset bug** -- line 81 uses `useState()` instead of `useEffect()` to reset state when `caseData` changes
+
+3. **Add global unhandled rejection handler** in `App.tsx` as a safety net
+
+4. **Update EmergencyMap default center** to support Tanzania (detect based on facilities or use a center point between Kenya/Tanzania)
 
 ## Technical Details
 
-Each category update is a single SQL `UPDATE` statement targeting the `reference_books` JSONB column on `first_aid_protocols`, filtered by `category`. Seven total updates will be executed via the data insert tool. No schema changes or code modifications are required -- the existing `ProtocolDetailModal` component already renders `reference_books` correctly.
+### RLS Fix SQL (Migration)
+```sql
+-- Drop all restrictive "Deny anonymous" policies
+DROP POLICY IF EXISTS "Deny anonymous access to emergency_cases" ON public.emergency_cases;
+DROP POLICY IF EXISTS "Deny anonymous access to profiles" ON public.profiles;
+DROP POLICY IF EXISTS "Deny anonymous access to user_roles" ON public.user_roles;
+DROP POLICY IF EXISTS "Deny anonymous access to chw_assignments" ON public.chw_assignments;
+DROP POLICY IF EXISTS "Deny anonymous access to chat_sessions" ON public.chat_sessions;
+DROP POLICY IF EXISTS "Deny anonymous access to chat_messages" ON public.chat_messages;
+DROP POLICY IF EXISTS "Deny anonymous access to sms_logs" ON public.sms_logs;
+DROP POLICY IF EXISTS "Deny anonymous access to audit_logs" ON public.audit_logs;
+DROP POLICY IF EXISTS "Deny anonymous access to emergency_contacts" ON public.emergency_contacts;
+DROP POLICY IF EXISTS "Deny anonymous access to push_subscriptions" ON public.push_subscriptions;
+```
+
+### Data Insertions
+- Use the insert tool for all facility and protocol data operations
+- Delete duplicate protocols by ID before inserting new ones
+
+### Code Changes
+- `src/components/admin/CHWManagementTab.tsx`: Update regions array
+- `src/components/dashboard/CaseDetailModal.tsx`: Fix `useState` -> `useEffect`
+- `src/App.tsx`: Add unhandled rejection handler
+- `src/components/emergency/EmergencyMap.tsx`: Adjust default center
+
+## Execution Order
+1. Database migration to fix RLS policies
+2. Delete duplicate protocols
+3. Insert Tanzania facilities
+4. Insert new protocols
+5. Code fixes (all in parallel)
 
