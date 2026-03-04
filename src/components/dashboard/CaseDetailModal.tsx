@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { MapPin, User, Phone, Droplets, AlertTriangle, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -78,12 +78,12 @@ const CaseDetailModal = ({
   const [saving, setSaving] = useState(false);
 
   // Reset state when case changes
-  useState(() => {
+  useEffect(() => {
     if (caseData) {
       setStatus(caseData.status);
       setNotes(caseData.resolution_notes || '');
     }
-  });
+  }, [caseData]);
 
   const handleSave = async () => {
     if (!caseData) return;

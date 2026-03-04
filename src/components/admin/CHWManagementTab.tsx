@@ -73,9 +73,14 @@ interface UserForAssignment {
 }
 
 const regions = [
+  // Kenya
   'Nairobi', 'Mombasa', 'Kisumu', 'Nakuru', 'Eldoret',
   'Machakos', 'Meru', 'Nyeri', 'Kakamega', 'Kisii',
   'Garissa', 'Malindi', 'Thika', 'Kitale', 'Kericho',
+  // Tanzania
+  'Dar es Salaam', 'Dodoma', 'Arusha', 'Mwanza', 'Mbeya',
+  'Tanga', 'Zanzibar', 'Morogoro', 'Kilimanjaro', 'Iringa',
+  'Moshi', 'Tabora', 'Kigoma', 'Songea', 'Lindi',
 ];
 
 export function CHWManagementTab() {

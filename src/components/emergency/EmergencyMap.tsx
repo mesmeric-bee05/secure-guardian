@@ -51,8 +51,8 @@ const EmergencyMap = ({
   useEffect(() => {
     if (!mapRef.current || mapInstanceRef.current) return;
 
-    // Default to Nairobi, Kenya
-    const defaultCenter: L.LatLngExpression = [-1.2921, 36.8219];
+    // Default to East Africa center (between Kenya & Tanzania)
+    const defaultCenter: L.LatLngExpression = [-4.0, 37.5];
     
     mapInstanceRef.current = L.map(mapRef.current, {
       center: userLocation ? [userLocation.lat, userLocation.lng] : defaultCenter,
