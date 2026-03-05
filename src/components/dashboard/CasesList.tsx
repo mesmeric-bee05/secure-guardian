@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, forwardRef } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -33,7 +33,7 @@ const filterTabs: { value: StatusFilter; labelEn: string; labelSw: string }[] = 
   { value: 'resolved', labelEn: 'Resolved', labelSw: 'Zilizokamilika' },
 ];
 
-const CasesList = ({ cases, loading, language, onCaseSelect }: CasesListProps) => {
+const CasesList = forwardRef<HTMLDivElement, CasesListProps>(({ cases, loading, language, onCaseSelect }, ref) => {
   const [filter, setFilter] = useState<StatusFilter>('all');
 
   const filteredCases = cases.filter(c => {
@@ -53,7 +53,7 @@ const CasesList = ({ cases, loading, language, onCaseSelect }: CasesListProps) =
   }
 
   return (
-    <div className="flex flex-col flex-1">
+    <div ref={ref} className="flex flex-col flex-1">
       <div className="px-4 py-3 border-b">
         <Tabs value={filter} onValueChange={(v) => setFilter(v as StatusFilter)}>
           <TabsList className="w-full grid grid-cols-4">
@@ -86,6 +86,8 @@ const CasesList = ({ cases, loading, language, onCaseSelect }: CasesListProps) =
       </ScrollArea>
     </div>
   );
-};
+});
+
+CasesList.displayName = 'CasesList';
 
 export default CasesList;

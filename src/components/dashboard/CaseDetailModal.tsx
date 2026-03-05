@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, forwardRef } from 'react';
 import { MapPin, User, Phone, Droplets, AlertTriangle, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -66,13 +66,13 @@ const priorityColors: Record<string, string> = {
   critical: 'bg-red-100 text-red-700',
 };
 
-const CaseDetailModal = ({
+const CaseDetailModal = forwardRef<HTMLDivElement, CaseDetailModalProps>(({
   open,
   onOpenChange,
   caseData,
   language,
   onUpdateStatus,
-}: CaseDetailModalProps) => {
+}, ref) => {
   const [status, setStatus] = useState(caseData?.status || 'pending');
   const [notes, setNotes] = useState(caseData?.resolution_notes || '');
   const [saving, setSaving] = useState(false);
@@ -118,7 +118,7 @@ const CaseDetailModal = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+      <DialogContent ref={ref} className="max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {t('caseDetails', language)}
@@ -249,6 +249,8 @@ const CaseDetailModal = ({
       </DialogContent>
     </Dialog>
   );
-};
+});
+
+CaseDetailModal.displayName = 'CaseDetailModal';
 
 export default CaseDetailModal;
