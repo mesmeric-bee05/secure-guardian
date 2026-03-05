@@ -53,10 +53,11 @@ const EmergencyMap = ({
 
     // Default to East Africa center (between Kenya & Tanzania)
     const defaultCenter: L.LatLngExpression = [-4.0, 37.5];
+    const defaultZoom = userLocation ? 13 : 6;
     
     mapInstanceRef.current = L.map(mapRef.current, {
       center: userLocation ? [userLocation.lat, userLocation.lng] : defaultCenter,
-      zoom: 13,
+      zoom: defaultZoom,
       zoomControl: false,
     });
 
@@ -95,6 +96,8 @@ const EmergencyMap = ({
     markersRef.current.forEach(marker => marker.remove());
     markersRef.current = [];
 
+    const bounds: L.LatLngExpression[] = [];
+
     facilities.forEach((facility) => {
       if (facility.latitude && facility.longitude) {
         const color = facilityColors[facility.facility_type] || '#6b7280';
@@ -112,9 +115,15 @@ const EmergencyMap = ({
           .on('click', () => onFacilitySelect(facility));
 
         markersRef.current.push(marker);
+        bounds.push([facility.latitude, facility.longitude]);
       }
     });
-  }, [facilities, onFacilitySelect]);
+
+    // Fit bounds to show all facilities if no user location
+    if (!userLocation && bounds.length > 1) {
+      mapInstanceRef.current.fitBounds(L.latLngBounds(bounds), { padding: [30, 30] });
+    }
+  }, [facilities, onFacilitySelect, userLocation]);
 
   // Pan to selected facility
   useEffect(() => {
