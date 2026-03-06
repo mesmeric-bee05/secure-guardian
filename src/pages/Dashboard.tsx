@@ -41,7 +41,7 @@ interface EmergencyCase {
 
 const Dashboard = () => {
   const navigate = useNavigate();
-  const { user, profile, isChw, isAdmin, loading: authLoading } = useAuth();
+  const { user, profile, isChw, isAdmin, loading: authLoading, rolesLoaded } = useAuth();
   const [language, setLanguage] = useState<Language>(
     (profile?.preferred_language as Language) || 'en'
   );
@@ -65,15 +65,15 @@ const Dashboard = () => {
   });
 
   useEffect(() => {
-    if (!authLoading && !isChw() && !isAdmin()) {
+    if (!authLoading && rolesLoaded && !isChw() && !isAdmin()) {
       navigate('/');
       return;
     }
     
-    if (user) {
+    if (user && rolesLoaded) {
       setLoading(false);
     }
-  }, [user, authLoading, isChw, isAdmin, navigate]);
+  }, [user, authLoading, rolesLoaded, isChw, isAdmin, navigate]);
 
   useEffect(() => {
     if (profile?.preferred_language) {
@@ -122,7 +122,7 @@ const Dashboard = () => {
     }
   };
 
-  if (authLoading || loading) {
+  if (authLoading || loading || !rolesLoaded) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />

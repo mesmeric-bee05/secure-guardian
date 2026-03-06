@@ -17,6 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { profileSchema, ProfileFormData } from '@/lib/validations';
 import { t, Language } from '@/lib/translations';
 import { toast } from 'sonner';
+import { getCsrfToken, validateCsrfToken } from '@/lib/csrf';
 
 interface ProfileFormProps {
   initialData: Partial<ProfileFormData>;
@@ -29,6 +30,7 @@ const bloodTypes = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 
 const ProfileForm = ({ initialData, language, onLanguageChange, onSave }: ProfileFormProps) => {
   const [saving, setSaving] = useState(false);
+  const [csrfToken] = useState(() => getCsrfToken());
 
   const {
     register,
@@ -51,6 +53,10 @@ const ProfileForm = ({ initialData, language, onLanguageChange, onSave }: Profil
   const bloodType = watch('bloodType');
 
   const onSubmit = async (data: ProfileFormData) => {
+    if (!validateCsrfToken(csrfToken)) {
+      toast.error(language === 'en' ? 'Security validation failed. Please refresh.' : 'Uthibitisho wa usalama umeshindikana.');
+      return;
+    }
     setSaving(true);
     try {
       await onSave(data);

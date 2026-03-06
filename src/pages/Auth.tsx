@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { Heart, Shield } from 'lucide-react';
 import { loginSchema, signupSchema } from '@/lib/validations';
+import { getCsrfToken, validateCsrfToken } from '@/lib/csrf';
 
 const ALLOWED_REDIRECTS = ['/', '/dashboard', '/chat', '/emergency', '/profile', '/reports', '/admin', '/onboarding'];
 
@@ -22,6 +23,7 @@ function isValidRedirect(path: string): boolean {
 
 export default function Auth() {
   const [isLoading, setIsLoading] = useState(false);
+  const [csrfToken] = useState(() => getCsrfToken());
   const { signIn, signUp } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -32,6 +34,10 @@ export default function Auth() {
     const email = formData.get('email') as string;
     const password = formData.get('password') as string;
 
+    if (!validateCsrfToken(csrfToken)) {
+      toast({ title: 'Error', description: 'Security validation failed. Please refresh.', variant: 'destructive' });
+      return;
+    }
     const result = loginSchema.safeParse({ email, password });
     if (!result.success) {
       toast({ title: 'Error', description: result.error.errors[0].message, variant: 'destructive' });
@@ -72,6 +78,11 @@ export default function Auth() {
       password: formData.get('password') as string,
       confirmPassword: formData.get('confirmPassword') as string,
     };
+
+    if (!validateCsrfToken(csrfToken)) {
+      toast({ title: 'Error', description: 'Security validation failed. Please refresh.', variant: 'destructive' });
+      return;
+    }
 
     const result = signupSchema.safeParse(data);
     if (!result.success) {

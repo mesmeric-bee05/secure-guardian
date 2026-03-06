@@ -22,6 +22,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { offlineStorage } from '@/lib/offlineStorage';
 import { toast } from 'sonner';
 import { t, Language } from '@/lib/translations';
+import { getCsrfToken, validateCsrfToken } from '@/lib/csrf';
 
 interface EmergencyAlertModalProps {
   open: boolean;
@@ -52,6 +53,7 @@ const EmergencyAlertModal = ({
   const [symptoms, setSymptoms] = useState(initialSymptoms);
   const [priority, setPriority] = useState<string>(initialPriority || 'high');
   const [sending, setSending] = useState(false);
+  const [csrfToken] = useState(() => getCsrfToken());
   const isOnline = navigator.onLine;
 
   // Update state when initial values change (from voice input)
@@ -68,6 +70,10 @@ const EmergencyAlertModal = ({
   }, [initialPriority]);
 
   const handleSend = async () => {
+    if (!validateCsrfToken(csrfToken)) {
+      toast.error(language === 'en' ? 'Security validation failed. Please refresh.' : 'Uthibitisho wa usalama umeshindikana. Tafadhali onyesha upya.');
+      return;
+    }
     if (!symptoms.trim()) {
       toast.error(language === 'en' ? 'Please describe the symptoms' : 'Tafadhali eleza dalili');
       return;

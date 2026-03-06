@@ -25,69 +25,63 @@ export function useAuth() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [roles, setRoles] = useState<UserRole[]>([]);
   const [loading, setLoading] = useState(true);
+  const [rolesLoaded, setRolesLoaded] = useState(false);
+
+  const fetchUserData = useCallback(async (userId: string) => {
+    try {
+      const [profileRes, rolesRes] = await Promise.all([
+        supabase.from('profiles').select('*').eq('user_id', userId).single(),
+        supabase.from('user_roles').select('role').eq('user_id', userId),
+      ]);
+
+      if (profileRes.data) {
+        setProfile(profileRes.data as Profile);
+      }
+      if (rolesRes.data) {
+        setRoles(rolesRes.data as UserRole[]);
+      }
+    } catch (error) {
+      console.error('Error fetching user data:', error);
+    } finally {
+      setRolesLoaded(true);
+    }
+  }, []);
 
   useEffect(() => {
-    // Set up auth state listener FIRST
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
+      (_event, session) => {
         setSession(session);
         setUser(session?.user ?? null);
-        
-        // Defer Supabase calls with setTimeout to avoid deadlock
+
         if (session?.user) {
+          // Use setTimeout to avoid Supabase auth deadlock, but track completion
           setTimeout(() => {
             fetchUserData(session.user.id);
           }, 0);
         } else {
           setProfile(null);
           setRoles([]);
+          setRolesLoaded(true);
         }
       }
     );
 
-    // THEN check for existing session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
-        fetchUserData(session.user.id);
+        fetchUserData(session.user.id).then(() => setLoading(false));
+      } else {
+        setRolesLoaded(true);
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     return () => subscription.unsubscribe();
-  }, []);
-
-  const fetchUserData = async (userId: string) => {
-    try {
-      // Fetch profile
-      const { data: profileData } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('user_id', userId)
-        .single();
-
-      if (profileData) {
-        setProfile(profileData as Profile);
-      }
-
-      // Fetch roles
-      const { data: rolesData } = await supabase
-        .from('user_roles')
-        .select('role')
-        .eq('user_id', userId);
-
-      if (rolesData) {
-        setRoles(rolesData as UserRole[]);
-      }
-    } catch (error) {
-      console.error('Error fetching user data:', error);
-    }
-  };
+  }, [fetchUserData]);
 
   const signUp = useCallback(async (email: string, password: string, fullName: string) => {
     const redirectUrl = `${window.location.origin}/`;
-    
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -96,16 +90,11 @@ export function useAuth() {
         data: { full_name: fullName },
       },
     });
-
     return { data, error };
   }, []);
 
   const signIn = useCallback(async (email: string, password: string) => {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     return { data, error };
   }, []);
 
@@ -116,24 +105,20 @@ export function useAuth() {
       setSession(null);
       setProfile(null);
       setRoles([]);
+      setRolesLoaded(false);
     }
     return { error };
   }, []);
 
   const updateProfile = useCallback(async (updates: Partial<Profile>) => {
     if (!user) return { error: new Error('Not authenticated') };
-
     const { data, error } = await supabase
       .from('profiles')
       .update(updates)
       .eq('user_id', user.id)
       .select()
       .single();
-
-    if (data) {
-      setProfile(data as Profile);
-    }
-
+    if (data) setProfile(data as Profile);
     return { data, error };
   }, [user]);
 
@@ -150,6 +135,7 @@ export function useAuth() {
     profile,
     roles,
     loading,
+    rolesLoaded,
     signUp,
     signIn,
     signOut,
