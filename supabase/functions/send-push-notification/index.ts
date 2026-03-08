@@ -12,7 +12,23 @@ function getCorsHeaders(req: Request) {
   return {
     'Access-Control-Allow-Origin': allowedOrigin,
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'X-Content-Type-Options': 'nosniff',
   };
+}
+
+// Rate limiting
+const rateLimiter = new Map<string, { count: number; resetAt: number }>();
+function checkRateLimit(key: string, limit: number, windowMs: number): boolean {
+  const now = Date.now();
+  const entry = rateLimiter.get(key);
+  if (!entry || now > entry.resetAt) {
+    rateLimiter.set(key, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+  if (entry.count >= limit) return false;
+  entry.count++;
+  return true;
 }
 
 serve(async (req) => {
@@ -23,12 +39,20 @@ serve(async (req) => {
   }
 
   try {
+    // Rate limit by IP (20/min)
+    const clientIP = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+    if (!checkRateLimit(`push:${clientIP}`, 20, 60000)) {
+      return new Response(
+        JSON.stringify({ error: 'Rate limit exceeded' }),
+        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const VAPID_PUBLIC_KEY = Deno.env.get('VAPID_PUBLIC_KEY');
     const VAPID_PRIVATE_KEY = Deno.env.get('VAPID_PRIVATE_KEY');
 
-    // Auth: Only allow service-role calls (internal use from emergency-alert)
     const authHeader = req.headers.get('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
       return new Response(
@@ -39,7 +63,6 @@ serve(async (req) => {
 
     const token = authHeader.replace('Bearer ', '');
     if (token !== SUPABASE_SERVICE_ROLE_KEY) {
-      // Not a service-role call — reject
       return new Response(
         JSON.stringify({ error: 'Forbidden - Internal use only' }),
         { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

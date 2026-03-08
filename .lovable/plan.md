@@ -1,66 +1,80 @@
 
 
-# Plan: Restore Auth Trigger, Clean Duplicate Protocols, Add Rate Limiting to Remaining Edge Functions
+# Plan: Fix CHW Dashboard Navigation, RLS Policies (Again), and Platform-Wide CSRF
 
-## Current State (Verified)
+## Root Cause: CHW Dashboard Redirects to Home
 
-**RLS policies**: All PERMISSIVE now -- confirmed via direct query. The Dashboard redirect fix (`rolesLoaded` guard) is in place and correct.
+The Dashboard page redirects to `/` because of an **auth race condition** in `useAuth` + `Dashboard`:
 
-**Auth trigger**: MISSING. `handle_new_user` trigger on `auth.users` does not exist. New signups will fail to get profiles or roles, breaking the entire app for new users.
+1. `useAuth` sets `loading = false` after `getSession()` resolves
+2. But `fetchUserData()` (which fetches roles) is called via `setTimeout(..., 0)` -- it hasn't completed yet
+3. Dashboard's `useEffect` fires: `authLoading=false` + `roles=[]` → `isChw()=false`, `isAdmin()=false` → **redirect to `/`**
 
-**Protocols**: 26 protocols exist. There are near-duplicates that should be cleaned:
-- "Heart Attack" (`cardiac`) + "Heart Attack Signs" (`heart_attack`) -- keep the one with severity (`heart_attack`, critical)
-- "Choking" (`breathing`, no severity) + "Choking Emergency" (`choking`, critical) -- keep the one with severity (`choking`, critical)
+The roles simply haven't loaded yet when the redirect decision is made.
 
-**Rate limiting**: Already present on `ai-chat`, `emergency-alert`, `sms-gateway`, `chw-location-update`. Missing on: `send-push-notification`, `sms-retry`, `ussd-handler`, `sms-webhook`.
+## Root Cause: RLS Policies Still Restrictive
 
-**CSRF**: Already integrated in `Auth.tsx`, `ProfileForm.tsx`, `EmergencyAlertModal.tsx`. Not yet in `ChatInput.tsx`.
+Despite 3 migration attempts, the `supabase-tables` context still shows `Permissive: No` on all policies. The `CREATE POLICY` statements didn't include the explicit `AS PERMISSIVE` clause. While PostgreSQL defaults to permissive, something in the migration chain may have preserved restrictive mode. We need one final migration with explicit `AS PERMISSIVE`.
 
 ---
 
-## Phase 1: Database Migration
+## Phase 1: Fix Auth Race Condition
 
-**Restore auth trigger** (critical for new user signups):
-```sql
-CREATE TRIGGER on_auth_user_created
-  AFTER INSERT ON auth.users
-  FOR EACH ROW
-  EXECUTE FUNCTION public.handle_new_user();
-```
+**File: `src/hooks/useAuth.ts`**
+- Add a `rolesLoaded` state (initially `false`)
+- Set `rolesLoaded = true` only after `fetchUserData` completes
+- Expose `rolesLoaded` from the hook
 
-**Delete duplicate protocols**:
-- Delete "Heart Attack" (id: `7c522129...`, category `cardiac`, no severity)
-- Delete "Choking" (id: `b7beec4d...`, category `breathing`, no severity)
+**File: `src/pages/Dashboard.tsx`**
+- Change the redirect guard to wait for `rolesLoaded` before checking roles:
+  ```
+  if (!authLoading && rolesLoaded && !isChw() && !isAdmin()) navigate('/')
+  ```
+- Show loading spinner while `!rolesLoaded`
 
-## Phase 2: Edge Function Rate Limiting
+**File: `src/components/auth/ProtectedRoute.tsx`**
+- Same fix: wait for roles to be fetched before rendering "Access Denied"
 
-Add in-memory rate limiters to the 4 functions that lack them:
+## Phase 2: Final RLS Policy Fix (Explicit PERMISSIVE)
 
-| Function | Limit | Window | Key |
-|---|---|---|---|
-| `send-push-notification` | Already service-role only -- add IP-based limiter (20/min) |
-| `sms-retry` | Already admin-only -- add user-based limiter (5/min) |
-| `ussd-handler` | Phone-number based (30/min) |
-| `sms-webhook` | IP-based (100/min) |
+**Database migration:** Drop and recreate ALL policies with explicit `AS PERMISSIVE` on every table:
+- `emergency_cases`, `profiles`, `user_roles`, `chw_assignments`
+- `chat_sessions`, `chat_messages`, `sms_logs`, `audit_logs`
+- `emergency_contacts`, `push_subscriptions`
+- `health_facilities`, `first_aid_protocols`, `ussd_sessions`
 
-Each gets the same pattern already used in `ai-chat`:
-```typescript
-const rateLimiter = new Map<string, { count: number; resetAt: number }>();
-function checkRateLimit(key: string, limit: number, windowMs: number): boolean { ... }
-```
+Also restore the `on_auth_user_created` trigger (currently missing per db-triggers context).
 
-## Phase 3: CSRF in ChatInput
+## Phase 3: Platform-Wide CSRF Foundation
 
-Add CSRF validation to `ChatInput.tsx` -- validate token before calling `onSend`. Import `getCsrfToken`/`validateCsrfToken` from `@/lib/csrf`.
+**File: `src/hooks/useCsrfToken.ts`** (update existing)
+- Already generates per-session tokens -- extend with a `withCsrf(callback)` wrapper utility
 
-## Phase 4: Minor Hardening
+**New file: `src/lib/csrf.ts`**
+- `getCsrfToken()` - retrieve or generate session token
+- `validateCsrfToken(token)` - validate against session
+- `csrfHeaders()` - return `{ 'X-CSRF-Token': token }` for fetch calls
 
-- Add `Access-Control-Allow-Methods: POST, OPTIONS` to all edge function CORS headers
-- Add `X-Content-Type-Options: nosniff` to edge function responses
+**Integrate into forms:**
+- `EmergencyAlertModal.tsx` - add hidden CSRF field, validate before `handleSend`
+- `ProfileForm.tsx` - validate CSRF token before `onSubmit`
+- `src/pages/Auth.tsx` - add CSRF to signup/login forms
+- `ChatInput.tsx` - add CSRF to message submissions
+
+**Edge function updates (optional hardening):**
+- Add `X-CSRF-Token` to allowed headers in CORS config across all edge functions
+
+## Phase 4: Minor Fixes
+
+- **`FirstAidProtocols.tsx`**: Add "View All" button functionality (currently a no-op button)
+- **`EmergencyMap.tsx`**: Already correct with `[-4.0, 37.5]` center and fitBounds
+- **Duplicate protocols**: `Heart Attack` exists in both `cardiac` and `heart_attack` categories; `Choking` in both `breathing` and `choking` -- clean these
 
 ## Execution Order
 
-1. Database migration (trigger + protocol cleanup)
-2. Edge functions updates (4 files, parallel)
-3. ChatInput CSRF integration
+1. Database migration (RLS + trigger fix)
+2. `useAuth.ts` race condition fix
+3. `ProtectedRoute.tsx` + `Dashboard.tsx` guard fixes
+4. CSRF utility creation and form integration
+5. Protocol dedup + minor UI fixes
 

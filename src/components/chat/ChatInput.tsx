@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import VoiceButton from './VoiceButton';
 import { t, Language } from '@/lib/translations';
+import { getCsrfToken, validateCsrfToken } from '@/lib/csrf';
+import { toast } from 'sonner';
 
 interface ChatInputProps {
   language: Language;
@@ -46,6 +48,11 @@ const ChatInput = ({
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (input.trim() && !isLoading) {
+      const token = getCsrfToken();
+      if (!validateCsrfToken(token)) {
+        toast.error('Security validation failed. Please refresh the page.');
+        return;
+      }
       onSend(input.trim());
       setInput('');
     }
