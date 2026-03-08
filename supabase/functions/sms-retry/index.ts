@@ -12,7 +12,23 @@ function getCorsHeaders(req: Request) {
   return {
     'Access-Control-Allow-Origin': allowedOrigin,
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'X-Content-Type-Options': 'nosniff',
   };
+}
+
+// Rate limiting (5/min per user)
+const rateLimiter = new Map<string, { count: number; resetAt: number }>();
+function checkRateLimit(key: string, limit: number, windowMs: number): boolean {
+  const now = Date.now();
+  const entry = rateLimiter.get(key);
+  if (!entry || now > entry.resetAt) {
+    rateLimiter.set(key, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+  if (entry.count >= limit) return false;
+  entry.count++;
+  return true;
 }
 
 const MAX_RETRIES = 3;
@@ -59,6 +75,14 @@ serve(async (req) => {
     }
 
     const userId = claims.user.id;
+
+    // Rate limit per user (5/min)
+    if (!checkRateLimit(`retry:${userId}`, 5, 60000)) {
+      return new Response(
+        JSON.stringify({ error: 'Rate limit exceeded. Please wait before retrying.' }),
+        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
     

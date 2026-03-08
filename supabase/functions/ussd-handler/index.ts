@@ -1,14 +1,28 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
-// Keep permissive CORS for USSD provider callbacks
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Content-Type': 'text/plain',
+  'X-Content-Type-Options': 'nosniff',
 };
 
-// Input sanitization
+// Rate limiting (30/min per phone number)
+const rateLimiter = new Map<string, { count: number; resetAt: number }>();
+function checkRateLimit(key: string, limit: number, windowMs: number): boolean {
+  const now = Date.now();
+  const entry = rateLimiter.get(key);
+  if (!entry || now > entry.resetAt) {
+    rateLimiter.set(key, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+  if (entry.count >= limit) return false;
+  entry.count++;
+  return true;
+}
+
 function sanitizeInput(input: string): string {
   if (!input || typeof input !== 'string') return '';
   return input.replace(/[^0-9*#]/g, '').slice(0, 100);
@@ -164,6 +178,11 @@ serve(async (req) => {
 
     if (!sessionId || !phoneNumber) {
       return new Response('END Invalid request.', { headers: corsHeaders });
+    }
+
+    // Rate limit per phone number (30/min)
+    if (!checkRateLimit(`ussd:${phoneNumber}`, 30, 60000)) {
+      return new Response('END Too many requests. Please try again later.', { headers: corsHeaders });
     }
 
     console.log('USSD request:', { sessionId: sessionId.slice(0, 8) + '...', inputLength: text.length });

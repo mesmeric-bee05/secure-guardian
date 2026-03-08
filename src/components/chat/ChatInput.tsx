@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import VoiceButton from './VoiceButton';
 import { t, Language } from '@/lib/translations';
+import { getCsrfToken, validateCsrfToken } from '@/lib/csrf';
+import { toast } from 'sonner';
 
 interface ChatInputProps {
   language: Language;
