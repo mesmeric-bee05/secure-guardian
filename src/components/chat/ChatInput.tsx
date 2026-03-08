@@ -48,6 +48,11 @@ const ChatInput = ({
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (input.trim() && !isLoading) {
+      const token = getCsrfToken();
+      if (!validateCsrfToken(token)) {
+        toast.error('Security validation failed. Please refresh the page.');
+        return;
+      }
       onSend(input.trim());
       setInput('');
     }
