@@ -50,7 +50,6 @@ const CaseCard = ({ case_, language, onClick }: CaseCardProps) => {
         <div className="flex items-start justify-between gap-3 mb-3">
           <div className="flex items-center gap-2">
             <Badge className={cn("text-xs", priorityColors[case_.priority])}>
-              {t(case_.priority as keyof typeof t extends 'low' | 'medium' | 'high' | 'critical' ? 'low' : 'low', language)}
               {case_.priority.charAt(0).toUpperCase() + case_.priority.slice(1)}
             </Badge>
             <Badge variant="outline" className={cn("text-xs", statusColors[case_.status])}>
