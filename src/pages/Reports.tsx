@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, BarChart3, TrendingUp, Users, Clock, Activity } from 'lucide-react';
+import { ArrowLeft, BarChart3, TrendingUp, Users, Clock, Activity, MapPin } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { supabase } from '@/integrations/supabase/client';
@@ -8,11 +8,11 @@ import { useAuth } from '@/hooks/useAuth';
 import { Loader2 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, LineChart, Line, Legend,
+  PieChart, Pie, Cell, LineChart, Line, Legend, AreaChart, Area,
 } from 'recharts';
 import { CSVExportButton } from '@/components/reports/CSVExportButton';
 import { DateRangeFilter, DateRange } from '@/components/reports/DateRangeFilter';
-import { subDays, eachDayOfInterval, format, isWithinInterval, startOfDay, endOfDay } from 'date-fns';
+import { subDays, eachDayOfInterval, format, isWithinInterval, startOfDay, endOfDay, differenceInHours } from 'date-fns';
 
 interface CaseData {
   id: string;
@@ -21,6 +21,7 @@ interface CaseData {
   status: string | null;
   created_at: string | null;
   resolved_at: string | null;
+  updated_at: string | null;
   assigned_chw_id: string | null;
   location_address: string | null;
 }
@@ -42,6 +43,7 @@ export default function Reports({ embedded = false }: ReportsProps) {
   const navigate = useNavigate();
   const { isChw, isAdmin, loading: authLoading } = useAuth();
   const [allCases, setAllCases] = useState<CaseData[]>([]);
+  const [chwNames, setChwNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState<DateRange>({
     from: subDays(new Date(), 30),
@@ -55,18 +57,33 @@ export default function Reports({ embedded = false }: ReportsProps) {
   }, [embedded, authLoading, isChw, isAdmin, navigate]);
 
   useEffect(() => {
-    async function fetchCases() {
+    async function fetchData() {
       const { data } = await supabase
         .from('emergency_cases')
-        .select('id, symptoms, priority, status, created_at, resolved_at, assigned_chw_id, location_address')
+        .select('id, symptoms, priority, status, created_at, resolved_at, updated_at, assigned_chw_id, location_address')
         .order('created_at', { ascending: false });
-      setAllCases(data || []);
+      
+      const cases = data || [];
+      setAllCases(cases);
+
+      // Fetch CHW profile names
+      const chwIds = [...new Set(cases.filter(c => c.assigned_chw_id).map(c => c.assigned_chw_id!))];
+      if (chwIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from('profiles')
+          .select('user_id, full_name')
+          .in('user_id', chwIds);
+        
+        const names: Record<string, string> = {};
+        profiles?.forEach(p => { names[p.user_id] = p.full_name; });
+        setChwNames(names);
+      }
+
       setLoading(false);
     }
-    fetchCases();
+    fetchData();
   }, []);
 
-  // Filter cases by date range
   const cases = useMemo(() => {
     return allCases.filter(c => {
       if (!c.created_at) return false;
@@ -80,7 +97,6 @@ export default function Reports({ embedded = false }: ReportsProps) {
 
   const trendData = useMemo(() => {
     const days = eachDayOfInterval({ start: dateRange.from, end: dateRange.to });
-    // Limit to max 60 data points for readability
     const step = Math.max(1, Math.floor(days.length / 60));
     const sampledDays = days.filter((_, i) => i % step === 0);
     
@@ -131,24 +147,73 @@ export default function Reports({ embedded = false }: ReportsProps) {
     return Math.round(total / resolved.length / 3600000 * 10) / 10;
   }, [cases]);
 
+  // Response time trend data (avg hours to resolution per day)
+  const responseTimeTrend = useMemo(() => {
+    const days = eachDayOfInterval({ start: dateRange.from, end: dateRange.to });
+    const step = Math.max(1, Math.floor(days.length / 30));
+    const sampledDays = days.filter((_, i) => i % step === 0);
+
+    return sampledDays.map(day => {
+      const dateStr = format(day, 'yyyy-MM-dd');
+      const resolved = cases.filter(c =>
+        c.resolved_at?.startsWith(dateStr) && c.created_at
+      );
+      const avgHrs = resolved.length > 0
+        ? Math.round(resolved.reduce((sum, c) =>
+            sum + differenceInHours(new Date(c.resolved_at!), new Date(c.created_at!)), 0
+          ) / resolved.length * 10) / 10
+        : null;
+
+      return { date: format(day, 'MMM d'), avgHours: avgHrs };
+    }).filter(d => d.avgHours !== null);
+  }, [cases, dateRange]);
+
+  // Regional breakdown
+  const regionalData = useMemo(() => {
+    const regionMap: Record<string, number> = {};
+    cases.forEach(c => {
+      const addr = c.location_address;
+      if (!addr) return;
+      // Extract region: use last meaningful part of address or full short address
+      const parts = addr.split(',').map(p => p.trim());
+      const region = parts.length >= 2 ? parts[parts.length - 2] : parts[0];
+      if (region) {
+        regionMap[region] = (regionMap[region] || 0) + 1;
+      }
+    });
+    return Object.entries(regionMap)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([name, count]) => ({ name: name.slice(0, 25), count }));
+  }, [cases]);
+
   const chwPerformance = useMemo(() => {
-    const map: Record<string, { count: number; resolved: number }> = {};
+    const map: Record<string, { count: number; resolved: number; totalHours: number }> = {};
     cases.forEach(c => {
       if (!c.assigned_chw_id) return;
-      if (!map[c.assigned_chw_id]) map[c.assigned_chw_id] = { count: 0, resolved: 0 };
+      if (!map[c.assigned_chw_id]) map[c.assigned_chw_id] = { count: 0, resolved: 0, totalHours: 0 };
       map[c.assigned_chw_id].count++;
-      if (c.status === 'resolved') map[c.assigned_chw_id].resolved++;
+      if (c.status === 'resolved') {
+        map[c.assigned_chw_id].resolved++;
+        if (c.created_at && c.resolved_at) {
+          map[c.assigned_chw_id].totalHours += differenceInHours(
+            new Date(c.resolved_at), new Date(c.created_at)
+          );
+        }
+      }
     });
     return Object.entries(map)
       .map(([id, data]) => ({
-        id: id.slice(0, 8),
+        id,
+        name: chwNames[id] || id.slice(0, 8) + '…',
         cases: data.count,
         resolved: data.resolved,
         rate: data.count ? Math.round(data.resolved / data.count * 100) : 0,
+        avgHours: data.resolved ? Math.round(data.totalHours / data.resolved * 10) / 10 : '-',
       }))
       .sort((a, b) => b.cases - a.cases)
       .slice(0, 10);
-  }, [cases]);
+  }, [cases, chwNames]);
 
   if (authLoading || loading) {
     return (
@@ -253,6 +318,31 @@ export default function Reports({ embedded = false }: ReportsProps) {
           </CardContent>
         </Card>
 
+        {/* Response Time Trend */}
+        {responseTimeTrend.length > 0 && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Clock className="h-4 w-4" />
+                Response Time Trend (avg hours to resolution)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="h-56">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={responseTimeTrend}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                    <XAxis dataKey="date" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
+                    <YAxis tick={{ fontSize: 11 }} unit="h" />
+                    <Tooltip formatter={(val: number) => [`${val}h`, 'Avg Resolution']} />
+                    <Area type="monotone" dataKey="avgHours" stroke="hsl(280, 70%, 50%)" fill="hsl(280, 70%, 50%)" fillOpacity={0.15} strokeWidth={2} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
           <Card>
             <CardHeader className="pb-2">
@@ -298,6 +388,31 @@ export default function Reports({ embedded = false }: ReportsProps) {
           </Card>
         </div>
 
+        {/* Regional Breakdown */}
+        {regionalData.length > 0 && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <MapPin className="h-4 w-4" />
+                Cases by Region
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={regionalData} layout="vertical" margin={{ left: 0, right: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                    <XAxis type="number" tick={{ fontSize: 11 }} />
+                    <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 10 }} />
+                    <Tooltip />
+                    <Bar dataKey="count" fill="hsl(180, 60%, 45%)" radius={[0, 4, 4, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Most Reported Symptoms</CardTitle>
@@ -327,19 +442,21 @@ export default function Reports({ embedded = false }: ReportsProps) {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border">
-                      <th className="text-left py-2 text-muted-foreground font-medium">CHW ID</th>
+                      <th className="text-left py-2 text-muted-foreground font-medium">Health Worker</th>
                       <th className="text-right py-2 text-muted-foreground font-medium">Cases</th>
                       <th className="text-right py-2 text-muted-foreground font-medium">Resolved</th>
                       <th className="text-right py-2 text-muted-foreground font-medium">Rate</th>
+                      <th className="text-right py-2 text-muted-foreground font-medium">Avg Hours</th>
                     </tr>
                   </thead>
                   <tbody>
                     {chwPerformance.map((chw) => (
                       <tr key={chw.id} className="border-b border-border/50">
-                        <td className="py-2 font-mono text-foreground">{chw.id}…</td>
+                        <td className="py-2 text-foreground">{chw.name}</td>
                         <td className="py-2 text-right text-foreground">{chw.cases}</td>
                         <td className="py-2 text-right text-foreground">{chw.resolved}</td>
                         <td className="py-2 text-right font-semibold text-foreground">{chw.rate}%</td>
+                        <td className="py-2 text-right text-muted-foreground">{chw.avgHours}</td>
                       </tr>
                     ))}
                   </tbody>

@@ -112,6 +112,15 @@ const Dashboard = () => {
       if (error) throw error;
 
       toast.success(language === 'en' ? 'Case updated' : 'Kesi imesasishwa');
+
+      // Send push notification to patient about status change
+      try {
+        await supabase.functions.invoke('notify-case-update', {
+          body: { case_id: id, new_status: status },
+        });
+      } catch (notifyErr) {
+        console.warn('Push notification failed (non-critical):', notifyErr);
+      }
       
       // Refresh to get latest data
       await refreshCases();
