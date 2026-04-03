@@ -141,8 +141,10 @@ const FirstAidProtocols = ({ language }: FirstAidProtocolsProps) => {
 
       {protocols.length > 6 && (
         <div className="mt-4 text-center">
-          <Button variant="outline" size="sm">
-            {language === 'en' ? 'View All Protocols' : 'Tazama Itifaki Zote'}
+          <Button variant="outline" size="sm" onClick={() => setShowAll(!showAll)}>
+            {showAll
+              ? (language === 'en' ? 'Show Less' : 'Onyesha Kidogo')
+              : (language === 'en' ? 'View All Protocols' : 'Tazama Itifaki Zote')}
           </Button>
         </div>
       )}
