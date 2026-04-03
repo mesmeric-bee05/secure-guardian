@@ -51,6 +51,7 @@ const translations = {
 const FirstAidProtocols = ({ language }: FirstAidProtocolsProps) => {
   const { protocols, isLoading, error, getTitle, getContent, getSteps } = useProtocols(language);
   const [selectedProtocol, setSelectedProtocol] = useState<typeof protocols[0] | null>(null);
+  const [showAll, setShowAll] = useState(false);
   const t = translations[language];
 
   const getIcon = (category: string) => 
