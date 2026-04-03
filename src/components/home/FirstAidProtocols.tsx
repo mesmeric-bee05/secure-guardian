@@ -105,7 +105,7 @@ const FirstAidProtocols = ({ language }: FirstAidProtocolsProps) => {
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        {protocols.slice(0, 6).map((protocol) => (
+        {(showAll ? protocols : protocols.slice(0, 6)).map((protocol) => (
           <Card
             key={protocol.id}
             className={`cursor-pointer transition-all hover:scale-[1.02] border ${getColor(protocol.category)}`}
