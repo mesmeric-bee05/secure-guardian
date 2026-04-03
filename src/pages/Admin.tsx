@@ -13,8 +13,9 @@ import { lazy, Suspense } from 'react';
 import { Loader2 } from 'lucide-react';
 
 const ReportsPage = lazy(() => import('@/pages/Reports'));
+const AnalyticsDashboardTab = lazy(() => import('@/components/admin/AnalyticsDashboardTab'));
 
-type AdminTab = 'users' | 'facilities' | 'protocols' | 'audit' | 'chw' | 'sms' | 'reports';
+type AdminTab = 'users' | 'facilities' | 'protocols' | 'audit' | 'chw' | 'sms' | 'reports' | 'analytics';
 
 export default function Admin() {
   const navigate = useNavigate();
