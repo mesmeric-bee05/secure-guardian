@@ -51,6 +51,7 @@ const translations = {
 const FirstAidProtocols = ({ language }: FirstAidProtocolsProps) => {
   const { protocols, isLoading, error, getTitle, getContent, getSteps } = useProtocols(language);
   const [selectedProtocol, setSelectedProtocol] = useState<typeof protocols[0] | null>(null);
+  const [showAll, setShowAll] = useState(false);
   const t = translations[language];
 
   const getIcon = (category: string) => 
@@ -104,7 +105,7 @@ const FirstAidProtocols = ({ language }: FirstAidProtocolsProps) => {
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        {protocols.slice(0, 6).map((protocol) => (
+        {(showAll ? protocols : protocols.slice(0, 6)).map((protocol) => (
           <Card
             key={protocol.id}
             className={`cursor-pointer transition-all hover:scale-[1.02] border ${getColor(protocol.category)}`}
@@ -140,8 +141,10 @@ const FirstAidProtocols = ({ language }: FirstAidProtocolsProps) => {
 
       {protocols.length > 6 && (
         <div className="mt-4 text-center">
-          <Button variant="outline" size="sm">
-            {language === 'en' ? 'View All Protocols' : 'Tazama Itifaki Zote'}
+          <Button variant="outline" size="sm" onClick={() => setShowAll(!showAll)}>
+            {showAll
+              ? (language === 'en' ? 'Show Less' : 'Onyesha Kidogo')
+              : (language === 'en' ? 'View All Protocols' : 'Tazama Itifaki Zote')}
           </Button>
         </div>
       )}

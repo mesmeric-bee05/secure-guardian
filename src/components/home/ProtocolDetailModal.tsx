@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { X, Volume2, VolumeX, AlertTriangle, Phone, CheckCircle, Play, BookOpen, ExternalLink } from 'lucide-react';
+import { toast } from 'sonner';
 import {
   Dialog,
   DialogContent,
@@ -296,7 +297,17 @@ const ProtocolDetailModal = ({
             variant="destructive"
             size="sm"
             className="flex-1"
-            onClick={() => window.location.href = 'tel:999'}
+            onClick={() => {
+              const num = '999';
+              const telWindow = window.open('tel:' + num, '_self');
+              if (!telWindow || telWindow.closed) {
+                navigator.clipboard?.writeText(num).then(() => {
+                  toast.success(language === 'en' ? `Emergency number ${num} copied to clipboard` : `Nambari ya dharura ${num} imenakiliwa`);
+                }).catch(() => {
+                  toast.info(language === 'en' ? `Call ${num} for emergency services` : `Piga ${num} kwa huduma za dharura`);
+                });
+              }
+            }}
           >
             <Phone className="h-4 w-4 mr-2" />
             {t.callEmergency}

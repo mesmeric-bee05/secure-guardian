@@ -13,8 +13,9 @@ import { lazy, Suspense } from 'react';
 import { Loader2 } from 'lucide-react';
 
 const ReportsPage = lazy(() => import('@/pages/Reports'));
+const AnalyticsDashboardTab = lazy(() => import('@/components/admin/AnalyticsDashboardTab'));
 
-type AdminTab = 'users' | 'facilities' | 'protocols' | 'audit' | 'chw' | 'sms' | 'reports';
+type AdminTab = 'users' | 'facilities' | 'protocols' | 'audit' | 'chw' | 'sms' | 'reports' | 'analytics';
 
 export default function Admin() {
   const navigate = useNavigate();
@@ -38,6 +39,12 @@ export default function Admin() {
         return (
           <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>}>
             <ReportsPage embedded />
+          </Suspense>
+        );
+      case 'analytics':
+        return (
+          <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>}>
+            <AnalyticsDashboardTab />
           </Suspense>
         );
       default:

@@ -1,7 +1,7 @@
-import { Users, Building2, FileText, ClipboardList, Shield, UserCog, MessageSquare, BarChart3 } from 'lucide-react';
+import { Users, Building2, FileText, ClipboardList, Shield, UserCog, MessageSquare, BarChart3, Activity } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-type AdminTab = 'users' | 'facilities' | 'protocols' | 'audit' | 'chw' | 'sms' | 'reports';
+type AdminTab = 'users' | 'facilities' | 'protocols' | 'audit' | 'chw' | 'sms' | 'reports' | 'analytics';
 
 interface AdminSidebarProps {
   activeTab: AdminTab;
@@ -16,6 +16,7 @@ const navItems = [
   { id: 'sms' as const, label: 'SMS Dashboard', icon: MessageSquare },
   { id: 'audit' as const, label: 'Audit Logs', icon: ClipboardList },
   { id: 'reports' as const, label: 'Reports', icon: BarChart3 },
+  { id: 'analytics' as const, label: 'Analytics', icon: Activity },
 ];
 
 export function AdminSidebar({ activeTab, onTabChange }: AdminSidebarProps) {
