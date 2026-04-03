@@ -41,6 +41,12 @@ export default function Admin() {
             <ReportsPage embedded />
           </Suspense>
         );
+      case 'analytics':
+        return (
+          <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>}>
+            <AnalyticsDashboardTab />
+          </Suspense>
+        );
       default:
         return <UsersTab />;
     }

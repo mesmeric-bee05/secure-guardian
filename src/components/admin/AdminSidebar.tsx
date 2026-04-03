@@ -16,6 +16,7 @@ const navItems = [
   { id: 'sms' as const, label: 'SMS Dashboard', icon: MessageSquare },
   { id: 'audit' as const, label: 'Audit Logs', icon: ClipboardList },
   { id: 'reports' as const, label: 'Reports', icon: BarChart3 },
+  { id: 'analytics' as const, label: 'Analytics', icon: Activity },
 ];
 
 export function AdminSidebar({ activeTab, onTabChange }: AdminSidebarProps) {
