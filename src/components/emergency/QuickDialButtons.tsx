@@ -23,23 +23,17 @@ const QuickDialButtons = ({ language }: QuickDialButtonsProps) => {
       return;
     }
 
-    // Desktop: always show toast, attempt clipboard copy
-    const msgCopied = language === 'en'
-      ? `Call ${serviceName}: ${number} (copied to clipboard)`
-      : `Piga simu ${serviceName}: ${number} (imenakiliwa)`;
-    const msgPlain = language === 'en'
-      ? `Call ${serviceName}: ${number}`
-      : `Piga simu ${serviceName}: ${number}`;
+    // Desktop: show toast immediately, then try clipboard
+    toast.info(
+      language === 'en'
+        ? `📞 Call ${serviceName}: ${number}`
+        : `📞 Piga simu ${serviceName}: ${number}`,
+      { duration: 5000 }
+    );
 
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(number).then(() => {
-        toast.success(msgCopied);
-      }).catch(() => {
-        toast.info(msgPlain);
-      });
-    } else {
-      toast.info(msgPlain);
-    }
+    try {
+      navigator.clipboard?.writeText(number);
+    } catch {}
   };
 
   return (
