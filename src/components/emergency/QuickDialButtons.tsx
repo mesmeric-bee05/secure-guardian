@@ -16,34 +16,24 @@ const emergencyNumbers = [
 
 const QuickDialButtons = ({ language }: QuickDialButtonsProps) => {
   const handleCall = (number: string, serviceName: string) => {
-    // Try opening tel: link (works on mobile)
-    const telWindow = window.open(`tel:${number}`, '_self');
+    const isMobile = /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(navigator.userAgent);
     
-    // Fallback for desktop: copy number and show toast
-    if (!telWindow || typeof telWindow === 'undefined') {
-      navigator.clipboard?.writeText(number).then(() => {
-        toast.success(
-          language === 'en'
-            ? `Call ${serviceName}: ${number} (copied to clipboard)`
-            : `Piga simu ${serviceName}: ${number} (imenakiliwa)`,
-        );
-      }).catch(() => {
-        toast.info(
-          language === 'en'
-            ? `Call ${serviceName}: ${number}`
-            : `Piga simu ${serviceName}: ${number}`,
-        );
-      });
-      
-      // Also show toast if clipboard isn't available
-      if (!navigator.clipboard) {
-        toast.info(
-          language === 'en'
-            ? `Call ${serviceName}: ${number}`
-            : `Piga simu ${serviceName}: ${number}`,
-        );
-      }
+    if (isMobile) {
+      window.location.href = `tel:${number}`;
+      return;
     }
+
+    // Desktop: show toast immediately, then try clipboard
+    toast.info(
+      language === 'en'
+        ? `📞 Call ${serviceName}: ${number}`
+        : `📞 Piga simu ${serviceName}: ${number}`,
+      { duration: 5000 }
+    );
+
+    try {
+      navigator.clipboard?.writeText(number);
+    } catch {}
   };
 
   return (

@@ -299,13 +299,18 @@ const ProtocolDetailModal = ({
             className="flex-1"
             onClick={() => {
               const num = '999';
-              const telWindow = window.open('tel:' + num, '_self');
-              if (!telWindow || telWindow.closed) {
-                navigator.clipboard?.writeText(num).then(() => {
-                  toast.success(language === 'en' ? `Emergency number ${num} copied to clipboard` : `Nambari ya dharura ${num} imenakiliwa`);
-                }).catch(() => {
-                  toast.info(language === 'en' ? `Call ${num} for emergency services` : `Piga ${num} kwa huduma za dharura`);
-                });
+              const isMobile = /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(navigator.userAgent);
+              if (isMobile) {
+                window.location.href = `tel:${num}`;
+                return;
+              }
+              navigator.clipboard?.writeText(num).then(() => {
+                toast.success(language === 'en' ? `Emergency number ${num} copied to clipboard` : `Nambari ya dharura ${num} imenakiliwa`);
+              }).catch(() => {
+                toast.info(language === 'en' ? `Call ${num} for emergency services` : `Piga ${num} kwa huduma za dharura`);
+              });
+              if (!navigator.clipboard) {
+                toast.info(language === 'en' ? `Call ${num} for emergency services` : `Piga ${num} kwa huduma za dharura`);
               }
             }}
           >
