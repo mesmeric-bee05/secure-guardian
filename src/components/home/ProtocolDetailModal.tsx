@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Language } from '@/lib/translations';
+import ProtocolVideoResource from './ProtocolVideoResource';
 
 interface ReferenceBook {
   title: string;
@@ -53,6 +54,8 @@ const translations = {
     stopSpeaking: 'Stop Reading',
     videoDemo: 'Video Demonstration',
     watchVideo: 'Watch Demo',
+    videoHelper: 'Trusted external training resource',
+    videoFallback: 'Open the trusted training guide in a new tab.',
     referenceBooks: 'Recommended Reading',
     viewBook: 'View Book',
   },
@@ -66,15 +69,12 @@ const translations = {
     stopSpeaking: 'Acha Kusoma',
     videoDemo: 'Video ya Maonyesho',
     watchVideo: 'Tazama Video',
+    videoHelper: 'Rasilimali salama ya mafunzo ya nje',
+    videoFallback: 'Fungua mwongozo salama wa mafunzo kwenye kichupo kipya.',
     referenceBooks: 'Vitabu vya Kurejelea',
     viewBook: 'Tazama Kitabu',
   },
 };
-
-function getYouTubeEmbedUrl(url: string): string | null {
-  const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([^&?\s]+)/);
-  return match ? `https://www.youtube.com/embed/${match[1]}` : null;
-}
 
 const ProtocolDetailModal = ({
   protocol,
@@ -122,7 +122,6 @@ const ProtocolDetailModal = ({
   if (!protocol) return null;
 
   const steps = getSteps(protocol);
-  const embedUrl = protocol.video_url ? getYouTubeEmbedUrl(protocol.video_url) : null;
   const books: ReferenceBook[] = Array.isArray(protocol.reference_books) ? protocol.reference_books : [];
 
   return (
@@ -163,28 +162,13 @@ const ProtocolDetailModal = ({
                 <Play className="h-4 w-4 text-primary" />
                 {t.videoDemo}
               </h3>
-              {embedUrl ? (
-                <div className="aspect-video rounded-lg overflow-hidden border border-border">
-                  <iframe
-                    src={embedUrl}
-                    title={getTitle(protocol)}
-                    className="w-full h-full"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                    allowFullScreen
-                  />
-                </div>
-              ) : (
-                <a
-                  href={protocol.video_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2 p-3 rounded-lg border border-border bg-muted hover:bg-accent transition-colors text-sm"
-                >
-                  <Play className="h-5 w-5 text-primary" />
-                  <span className="text-foreground font-medium">{t.watchVideo}</span>
-                  <ExternalLink className="h-3 w-3 ml-auto text-muted-foreground" />
-                </a>
-              )}
+              <ProtocolVideoResource
+                fallbackText={t.videoFallback}
+                helperText={t.videoHelper}
+                url={protocol.video_url}
+                title={getTitle(protocol)}
+                watchLabel={t.watchVideo}
+              />
               <Separator className="my-4" />
             </div>
           )}

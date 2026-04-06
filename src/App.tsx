@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
 import { useServiceWorker } from "@/hooks/useServiceWorker";
+import { useOfflineData } from "@/hooks/useOfflineData";
 import OfflineIndicator from "@/components/offline/OfflineIndicator";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
@@ -24,6 +25,7 @@ const queryClient = new QueryClient();
 const AppContent = () => {
   // Initialize service worker for PWA functionality
   useServiceWorker('en');
+  useOfflineData({ autoCache: true });
 
   // Global unhandled rejection handler
   useEffect(() => {
