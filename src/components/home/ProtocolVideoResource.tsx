@@ -2,6 +2,8 @@ import { ExternalLink, PlayCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 interface ProtocolVideoResourceProps {
+  fallbackText: string;
+  helperText: string;
   url: string;
   title: string;
   watchLabel: string;
@@ -17,7 +19,7 @@ function getVideoThumbnail(url: string): string | null {
   return youtubeId ? `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg` : null;
 }
 
-const ProtocolVideoResource = ({ url, title, watchLabel }: ProtocolVideoResourceProps) => {
+const ProtocolVideoResource = ({ url, title, watchLabel, helperText, fallbackText }: ProtocolVideoResourceProps) => {
   const thumbnail = getVideoThumbnail(url);
 
   return (
@@ -39,14 +41,14 @@ const ProtocolVideoResource = ({ url, title, watchLabel }: ProtocolVideoResource
         </div>
       ) : (
         <div className="flex aspect-video items-center justify-center bg-muted/60 px-4 text-center text-sm text-muted-foreground">
-          Open the trusted training video resource in a new tab.
+          {fallbackText}
         </div>
       )}
 
       <div className="flex items-center justify-between gap-3 border-t border-border bg-background/80 p-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-foreground">{title}</p>
-          <p className="text-xs text-muted-foreground">Trusted external training resource</p>
+          <p className="text-xs text-muted-foreground">{helperText}</p>
         </div>
 
         <Button asChild size="sm">

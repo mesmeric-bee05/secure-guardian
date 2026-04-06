@@ -54,6 +54,8 @@ const translations = {
     stopSpeaking: 'Stop Reading',
     videoDemo: 'Video Demonstration',
     watchVideo: 'Watch Demo',
+    videoHelper: 'Trusted external training resource',
+    videoFallback: 'Open the trusted training guide in a new tab.',
     referenceBooks: 'Recommended Reading',
     viewBook: 'View Book',
   },
@@ -67,6 +69,8 @@ const translations = {
     stopSpeaking: 'Acha Kusoma',
     videoDemo: 'Video ya Maonyesho',
     watchVideo: 'Tazama Video',
+    videoHelper: 'Rasilimali salama ya mafunzo ya nje',
+    videoFallback: 'Fungua mwongozo salama wa mafunzo kwenye kichupo kipya.',
     referenceBooks: 'Vitabu vya Kurejelea',
     viewBook: 'Tazama Kitabu',
   },
@@ -159,6 +163,8 @@ const ProtocolDetailModal = ({
                 {t.videoDemo}
               </h3>
               <ProtocolVideoResource
+                fallbackText={t.videoFallback}
+                helperText={t.videoHelper}
                 url={protocol.video_url}
                 title={getTitle(protocol)}
                 watchLabel={t.watchVideo}
