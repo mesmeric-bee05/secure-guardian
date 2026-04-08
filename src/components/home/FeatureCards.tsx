@@ -37,9 +37,9 @@ const features = [
   },
 ];
 
-const FeatureCards = forwardRef<HTMLDivElement, FeatureCardsProps>(({ language }, ref) => {
+const FeatureCards = ({ language }: FeatureCardsProps) => {
   return (
-    <div ref={ref} className="px-4 py-6 bg-muted/50">
+    <div className="px-4 py-6 bg-muted/50">
       <h2 className="text-lg font-semibold mb-4">
         {language === 'en' ? 'Features' : 'Vipengele'}
       </h2>
