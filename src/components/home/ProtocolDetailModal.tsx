@@ -305,8 +305,6 @@ const ProtocolDetailModal = ({
       </DialogContent>
     </Dialog>
   );
-});
-
-ProtocolDetailModal.displayName = 'ProtocolDetailModal';
+};
 
 export default ProtocolDetailModal;
