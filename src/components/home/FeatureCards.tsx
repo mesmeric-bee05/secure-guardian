@@ -66,4 +66,3 @@ const FeatureCards = ({ language }: FeatureCardsProps) => {
 };
 
 export default FeatureCards;
-export default FeatureCards;
