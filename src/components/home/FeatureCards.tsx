@@ -1,4 +1,3 @@
-import { forwardRef } from 'react';
 import { Mic, Globe, Clock, Bell } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Language } from '@/lib/translations';
