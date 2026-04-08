@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, forwardRef } from 'react';
 import { X, Volume2, VolumeX, AlertTriangle, Phone, CheckCircle, Play, BookOpen, ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -76,14 +76,14 @@ const translations = {
   },
 };
 
-const ProtocolDetailModal = ({
+const ProtocolDetailModal = forwardRef<HTMLDivElement, ProtocolDetailModalProps>(({
   protocol,
   language,
   onClose,
   getTitle,
   getContent,
   getSteps,
-}: ProtocolDetailModalProps) => {
+}, ref) => {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const t = translations[language];
 
@@ -305,6 +305,8 @@ const ProtocolDetailModal = ({
       </DialogContent>
     </Dialog>
   );
-};
+});
+
+ProtocolDetailModal.displayName = 'ProtocolDetailModal';
 
 export default ProtocolDetailModal;
