@@ -305,6 +305,8 @@ const ProtocolDetailModal = forwardRef<HTMLDivElement, ProtocolDetailModalProps>
       </DialogContent>
     </Dialog>
   );
-};
+});
+
+ProtocolDetailModal.displayName = 'ProtocolDetailModal';
 
 export default ProtocolDetailModal;
