@@ -63,8 +63,7 @@ const FeatureCards = ({ language }: FeatureCardsProps) => {
       </div>
     </div>
   );
-});
+};
 
-FeatureCards.displayName = 'FeatureCards';
-
+export default FeatureCards;
 export default FeatureCards;

@@ -76,14 +76,14 @@ const translations = {
   },
 };
 
-const ProtocolDetailModal = forwardRef<HTMLDivElement, ProtocolDetailModalProps>(({
+const ProtocolDetailModal = ({
   protocol,
   language,
   onClose,
   getTitle,
   getContent,
   getSteps,
-}, ref) => {
+}: ProtocolDetailModalProps) => {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const t = translations[language];
 
