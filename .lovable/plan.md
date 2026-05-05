@@ -1,71 +1,54 @@
+# Plan: Expand Protocol Library + End-to-End Verification
 
+## 1. Add 4 New Bilingual First Aid Protocols
 
-# Plan: Security Hardening, End-to-End Verification, and Project Polish
+Insert into `first_aid_protocols` table with full English/Swahili content, validated `video_url`, and curated `reference_books` JSON:
 
-## Current State Assessment
+1. **Jellyfish Stings** (category: `marine`, severity: `high`)
+   - Steps: get out of water, rinse with vinegar/seawater (not fresh water), remove tentacles with tweezers, hot water immersion 40-45°C for 20-40 min, pain relief
+   - Red flags: difficulty breathing, chest pain, multiple stings, child/elderly victim
 
-### Security Scan Results (4 new findings + 3 existing)
-1. **Realtime channel authorization** (error) -- already ignored with justification
-2. **Privilege escalation role assignment** (warn) -- `has_role` function verified: it is SECURITY DEFINER with fixed `search_path`
-3. **SMS logs write protection** (warn) -- no INSERT/UPDATE/DELETE policies exist, which means default-deny is active (correct)
-4. **CHW unassigned cases visibility** (warn) -- intentional design for emergency triage workflow
-5. **Leaked password protection** (warn) -- requires Cloud dashboard config, already documented
-6. **USSD sessions fragile pattern** (ignored) -- already justified
-7. **Circular trust in user_roles** (ignored) -- already justified
+2. **Heat Cramps** (category: `environmental`, severity: `medium`)
+   - Steps: stop activity, move to cool area, gentle stretching, oral rehydration with electrolytes, rest 1+ hours before resuming activity
+   - Red flags: cramps lasting >1 hour, nausea, signs of heat exhaustion progression
 
-### Code & Feature Status
-- **40 protocols** all have `video_url` and `reference_books` populated
-- **View All Protocols** toggle works (showAll state in FirstAidProtocols.tsx)
-- **ProtocolVideoResource** renders YouTube thumbnail + external "Watch Demo" link (no iframe)
-- **Emergency quick-dial** has mobile `tel:` + desktop clipboard/toast fallback
-- **Chat input** renders correctly with CSRF validation, voice support, character counter
-- **Analytics dashboard** exists with summary cards, charts, CHW metrics
+3. **Lightning Strike First Aid** (category: `environmental`, severity: `critical`)
+   - Steps: ensure scene safety, call 999, check ABC, start CPR if no pulse (lightning victims have high CPR success), treat for shock, look for entry/exit burns, immobilize spine
+   - Red flags: cardiac arrest, unconsciousness, burns, paralysis, multiple victims (triage reverse — treat "dead" first)
 
-## Changes
+4. **Chemical Burns** (category: `burns`, severity: `high`)
+   - Steps: PPE/avoid contact, brush off dry chemicals first, flush with copious cool running water 20+ min, remove contaminated clothing/jewelry, cover loosely with sterile gauze, identify chemical for hospital
+   - Red flags: eye exposure, inhalation, large surface area, unknown chemical, signs of shock
 
-### 1. Manage Security Findings (4 new scan findings)
+Each entry includes:
+- `video_url` — verified YouTube training resource (St John Ambulance, Red Cross, etc.)
+- `reference_books` — JSONB array with 2-3 entries (e.g., "Where There Is No Doctor", "First Aid Manual" by DK/British Red Cross, ACEP First Aid Manual)
 
-Use `security--manage_security_finding` to resolve all 4 new findings:
+Insert via the database insert tool (data operation, not schema change). Total protocols will become 48.
 
-- **Realtime channel auth**: Ignore -- `realtime.messages` is a reserved schema; cannot add user RLS policies. Client code scopes subscriptions. Table-level RLS restricts query results.
-- **Privilege escalation**: Ignore -- `has_role()` is confirmed SECURITY DEFINER with `search_path = public`. Standard Supabase RBAC pattern. No exploit path exists.
-- **SMS logs write protection**: Ignore -- no INSERT/UPDATE/DELETE policies = PostgreSQL default-deny. Only service role (edge functions) writes to this table.
-- **CHW unassigned cases**: Ignore -- intentional triage design. CHWs must see nearby unassigned cases to respond to emergencies. This is a core workflow requirement.
+## 2. Browser Verification (4 flows)
 
-### 2. Browser Verification (3 flows)
+After inserting, run live browser checks:
 
-**Flow A: Protocol Modal**
-- Navigate to home page
-- Click "View All Protocols" to expand list
-- Open "Anaphylaxis & Severe Allergic Reactions" protocol
-- Verify video thumbnail and "Watch Demo" button render
-- Verify reference books section displays
+**Flow A — Home → Food Poisoning protocol**
+- Navigate to `/`, scroll to First Aid Protocols, click "View All Protocols", open "Food Poisoning"
+- Verify: title, content, steps, video preview card with thumbnail + "Watch Demo" external link, reference books list
 
-**Flow B: Emergency Quick-Dial**
-- Navigate to /emergency
-- Click Emergency, Ambulance, Police, Fire buttons
-- Verify toast notifications appear with phone number on desktop
+**Flow B — Home → New protocols**
+- Open one of the 4 new protocols (e.g., Lightning Strike) to confirm video + books render
 
-**Flow C: Chat**
-- Navigate to /chat
-- Verify textarea is visible
-- Send a test message and confirm AI response streams
+**Flow C — /chat AI response**
+- Navigate to `/chat`, sign in if needed, send test message ("What should I do for a burn?"), confirm streamed AI response renders as markdown
 
-### 3. Minor Polish (if issues found during verification)
-- Fix any layout/rendering issues discovered during browser testing
-- Ensure all buttons are responsive and functional
+**Flow D — /admin Analytics tab**
+- Navigate to `/admin`, click Analytics tab, verify summary cards, charts, and system health indicators render
 
-## Execution Order
-1. Manage all 4 security findings
-2. Browser verify protocol modal flow
-3. Browser verify emergency buttons
-4. Browser verify chat input and response
+## 3. Security & Error Handling
+- Run security scan after data insertion to confirm no new findings
+- Check console + network tabs for errors during each flow; fix any issues found
 
 ## Technical Details
-
-All security findings are being resolved via documentation/justification rather than code changes because:
-- Default-deny is already in place for tables without explicit write policies
-- Realtime channel authorization cannot be enforced via user-defined RLS on reserved schemas
-- The RBAC circular dependency is a standard pattern with ACID guarantees
-- CHW visibility of unassigned cases is an intentional emergency response design decision
-
+- Data insertion uses `INSERT` statements via the insert tool (not migration — no schema change)
+- All `reference_books` entries use `{title, author, url, isbn?}` JSON shape consumed by `ProtocolDetailModal`
+- All `video_url` entries use canonical `youtube.com/watch?v=...` URLs parsed by `ProtocolVideoResource.getYouTubeVideoId`
+- Categories `marine` and `environmental` will fall through to the default icon/color in `FirstAidProtocols.tsx` (acceptable — existing pattern)
