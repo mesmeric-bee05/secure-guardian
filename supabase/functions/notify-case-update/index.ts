@@ -51,27 +51,15 @@ serve(async (req) => {
 
     const callerId = claims.claims.sub as string;
 
-    if (!checkRateLimit(callerId)) {
-      return new Response(JSON.stringify({ error: 'Rate limit exceeded' }), {
-        status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+    const limited = await enforceLimits({
+      scope: 'notify-case', ip: getClientIP(req), userId: callerId,
+      ipLimitPerMin: 30, userLimitPerMin: 30, corsHeaders,
+    });
+    if (limited) return limited;
 
-    const body = await req.json();
-    const caseId = body?.case_id;
-    const newStatus = body?.new_status;
-
-    if (!caseId || typeof caseId !== 'string') {
-      return new Response(JSON.stringify({ error: 'case_id is required' }), {
-        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    if (!newStatus || !statusLabels[newStatus]) {
-      return new Response(JSON.stringify({ error: 'Invalid new_status' }), {
-        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+    const parsed = await parseBody(req, NotifyBodySchema);
+    if (!parsed.ok || !parsed.data) return badRequest(parsed.error!, corsHeaders);
+    const { case_id: caseId, new_status: newStatus } = parsed.data;
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
