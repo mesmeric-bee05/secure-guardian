@@ -57,18 +57,15 @@ serve(async (req) => {
 
     const userId = claims.user.id;
 
-    // Rate limit per user (5/min)
-    if (!checkRateLimit(`retry:${userId}`, 5, 60000)) {
-      return new Response(
-        JSON.stringify({ error: 'Rate limit exceeded. Please wait before retrying.' }),
-        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const limited = await enforceLimits({
+      scope: 'sms-retry', ip: getClientIP(req), userId,
+      ipLimitPerMin: 10, userLimitPerMin: 5, corsHeaders,
+    });
+    if (limited) return limited;
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-    
+
     const { data: isAdmin } = await supabase.rpc('is_admin', { _user_id: userId });
-    
     if (!isAdmin) {
       return new Response(
         JSON.stringify({ error: 'Forbidden - Admin access required' }),
@@ -76,8 +73,9 @@ serve(async (req) => {
       );
     }
 
-    const body = await req.json();
-    const { sms_log_ids, retry_all_failed } = body;
+    const parsed = await parseBody(req, RetryBodySchema);
+    if (!parsed.ok || !parsed.data) return badRequest(parsed.error!, corsHeaders);
+    const { sms_log_ids, retry_all_failed } = parsed.data;
 
     let targetIds: string[] = [];
     
