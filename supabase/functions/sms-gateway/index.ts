@@ -52,28 +52,20 @@ serve(async (req) => {
 
     const userId = claims.claims.sub as string;
 
-    if (!checkRateLimit(userId, 10, 60000)) {
-      return new Response(
-        JSON.stringify({ error: 'Rate limit exceeded. Please wait a moment and try again.' }),
-        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const limited = await enforceLimits({
+      scope: 'sms-gateway', ip: getClientIP(req), userId,
+      ipLimitPerMin: 10, userLimitPerMin: 20, corsHeaders,
+    });
+    if (limited) return limited;
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    const rawBody = await req.json();
-    const validation = validateSMSInput(rawBody);
-    
-    if (!validation.valid || !validation.parsed) {
-      return new Response(
-        JSON.stringify({ error: validation.error || 'Invalid input' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const parsed = await parseBody(req, SmsBodySchema);
+    if (!parsed.ok || !parsed.data) return badRequest(parsed.error!, corsHeaders);
+    const { to, message } = parsed.data;
+    const recipients = Array.isArray(to) ? to : [to];
 
-    const { to, message } = validation.parsed;
-
-    const formattedRecipients = to.map(phone => {
+    const formattedRecipients = recipients.map((phone) => {
       const cleaned = phone.replace(/\s/g, '');
       if (cleaned.startsWith('+')) return cleaned;
       if (cleaned.startsWith('0')) return '+254' + cleaned.slice(1);
