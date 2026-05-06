@@ -108,26 +108,16 @@ serve(async (req) => {
 
     const userId = claims.claims.sub as string;
 
-    // Rate limiting
-    if (!checkRateLimit(userId)) {
-      return new Response(
-        JSON.stringify({ error: 'Rate limit exceeded. Please wait a moment and try again.' }),
-        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    // Durable IP+user rate limiting
+    const limited = await enforceLimits({
+      scope: 'ai-chat', ip: getClientIP(req), userId,
+      ipLimitPerMin: 20, userLimitPerMin: 30, corsHeaders,
+    });
+    if (limited) return limited;
 
-    // Parse and validate input
-    const rawBody = await req.json();
-    const validation = validateChatInput(rawBody);
-    
-    if (!validation.valid || !validation.parsed) {
-      return new Response(
-        JSON.stringify({ error: validation.error || 'Invalid input' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const { messages, language } = validation.parsed;
+    const parsed = await parseBody(req, ChatBodySchema);
+    if (!parsed.ok || !parsed.data) return badRequest(parsed.error!, corsHeaders);
+    const { messages, language } = parsed.data;
     const systemPrompt = language === 'sw' ? SYSTEM_PROMPT_SW : SYSTEM_PROMPT_EN;
 
     console.log('AI Chat request:', { userId: userId.slice(0, 8) + '...', messageCount: messages.length, language });
