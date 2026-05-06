@@ -1,54 +1,103 @@
-# Plan: Expand Protocol Library + End-to-End Verification
+## Goals
 
-## 1. Add 4 New Bilingual First Aid Protocols
+1. **Durable rate limiting** backed by Postgres (survives cold starts, shared across instances)
+2. **Validation audit + hardening** of every edge function with Zod (strict schemas, length caps, `.strict()` to reject unknown fields)
+3. **Best-effort IP+user token-bucket** on every public endpoint with proper 429 + `Retry-After`
+4. **Rotate all server API keys** and confirm no secret leaks to the client
 
-Insert into `first_aid_protocols` table with full English/Swahili content, validated `video_url`, and curated `reference_books` JSON:
+---
 
-1. **Jellyfish Stings** (category: `marine`, severity: `high`)
-   - Steps: get out of water, rinse with vinegar/seawater (not fresh water), remove tentacles with tweezers, hot water immersion 40-45°C for 20-40 min, pain relief
-   - Red flags: difficulty breathing, chest pain, multiple stings, child/elderly victim
+## 1. Durable Rate Limiting (Postgres-backed)
 
-2. **Heat Cramps** (category: `environmental`, severity: `medium`)
-   - Steps: stop activity, move to cool area, gentle stretching, oral rehydration with electrolytes, rest 1+ hours before resuming activity
-   - Red flags: cramps lasting >1 hour, nausea, signs of heat exhaustion progression
+Create a shared `rate_limit_buckets` table + `consume_rate_limit` SQL function (atomic token bucket via `UPDATE ... RETURNING`). Counters persist across cold starts and are consistent across all edge function instances.
 
-3. **Lightning Strike First Aid** (category: `environmental`, severity: `critical`)
-   - Steps: ensure scene safety, call 999, check ABC, start CPR if no pulse (lightning victims have high CPR success), treat for shock, look for entry/exit burns, immobilize spine
-   - Red flags: cardiac arrest, unconsciousness, burns, paralysis, multiple victims (triage reverse — treat "dead" first)
+```text
+rate_limit_buckets
+  bucket_key TEXT PK     -- e.g. "ai-chat:ip:1.2.3.4" or "ai-chat:user:<uuid>"
+  tokens     NUMERIC
+  updated_at TIMESTAMPTZ
+```
 
-4. **Chemical Burns** (category: `burns`, severity: `high`)
-   - Steps: PPE/avoid contact, brush off dry chemicals first, flush with copious cool running water 20+ min, remove contaminated clothing/jewelry, cover loosely with sterile gauze, identify chemical for hospital
-   - Red flags: eye exposure, inhalation, large surface area, unknown chemical, signs of shock
+`consume_rate_limit(key, capacity, refill_per_sec, cost)` returns `{allowed, remaining, retry_after_seconds}` — all logic inside one atomic SQL call. RLS deny-all (service role only).
 
-Each entry includes:
-- `video_url` — verified YouTube training resource (St John Ambulance, Red Cross, etc.)
-- `reference_books` — JSONB array with 2-3 entries (e.g., "Where There Is No Doctor", "First Aid Manual" by DK/British Red Cross, ACEP First Aid Manual)
+Shared helper: `supabase/functions/_shared/rateLimit.ts` — wraps the RPC, derives keys from IP (`x-forwarded-for`) and authenticated user id, returns a 429 JSON response with `Retry-After` header when blocked.
 
-Insert via the database insert tool (data operation, not schema change). Total protocols will become 48.
+Per-endpoint defaults (tunable):
 
-## 2. Browser Verification (4 flows)
+| Function | IP/min | User/min |
+|---|---|---|
+| ai-chat | 20 | 30 |
+| sms-gateway | 10 | 20 |
+| sms-webhook | 60 | — |
+| ussd-handler | 30 | — |
+| emergency-alert | 10 | 15 |
+| chw-location-update | 60 | 30 (already 1/30s) |
+| send-push-notification | 60 | — (service-role only) |
+| notify-case-update | 30 | 30 |
+| sms-retry | 10 | — |
 
-After inserting, run live browser checks:
+---
 
-**Flow A — Home → Food Poisoning protocol**
-- Navigate to `/`, scroll to First Aid Protocols, click "View All Protocols", open "Food Poisoning"
-- Verify: title, content, steps, video preview card with thumbnail + "Watch Demo" external link, reference books list
+## 2. Validation Audit (Zod everywhere)
 
-**Flow B — Home → New protocols**
-- Open one of the 4 new protocols (e.g., Lightning Strike) to confirm video + books render
+Add `_shared/validation.ts` with reusable Zod primitives (phone, uuid, language, bounded text). For each function, define a `BodySchema = z.object({...}).strict()` so unknown fields are rejected. Length caps on every string. Numeric range checks on coordinates.
 
-**Flow C — /chat AI response**
-- Navigate to `/chat`, sign in if needed, send test message ("What should I do for a burn?"), confirm streamed AI response renders as markdown
+Audit checklist per function:
 
-**Flow D — /admin Analytics tab**
-- Navigate to `/admin`, click Analytics tab, verify summary cards, charts, and system health indicators render
+- `ai-chat` — verify schema covers `messages[].role/content`, `language`, `sessionId`; cap message count + content length; `.strict()`
+- `sms-gateway` — phone E.164 regex, message ≤ 160 chars (or document multi-part), `.strict()`
+- `sms-webhook` — provider payload schema, signature/source check
+- `sms-retry` — admin-only, validate `messageId`
+- `ussd-handler` — `sessionId`, `phoneNumber`, `text` length cap, `.strict()`
+- `emergency-alert` — symptoms text cap, lat/lng range, optional notes cap
+- `chw-location-update` — already validates lat/lng; add `.strict()` and reject extra fields
+- `send-push-notification` — title/body length caps, `data` size cap
+- `notify-case-update` — uuid for case_id, enum for new_status (already partial)
 
-## 3. Security & Error Handling
-- Run security scan after data insertion to confirm no new findings
-- Check console + network tabs for errors during each flow; fix any issues found
+Client-side: confirm `src/lib/validations.ts` Zod schemas mirror server caps for: profile, emergency contact, onboarding, chat input (already 2000 char cap), SOS form. Add any missing `.max()`/`.strict()`.
+
+---
+
+## 3. 429 Response Contract
+
+Every public endpoint returns:
+```json
+{ "error": "Rate limit exceeded", "retry_after_seconds": <n> }
+```
+with headers `Retry-After: <n>`, `X-RateLimit-Remaining: <n>`. Replace existing in-memory `Map`-based limiters in `chw-location-update`, `notify-case-update`, `send-push-notification` with the shared Postgres helper.
+
+---
+
+## 4. Secret Rotation & Client Exposure Audit
+
+- Run `supabase--rotate_api_keys` (rotates anon + service role; updates `.env` automatically)
+- Run `ai_gateway--rotate_lovable_api_key` (rotates `LOVABLE_API_KEY`)
+- Grep audit: confirm only `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` appear under `src/`. Verify no `SERVICE_ROLE`, `LOVABLE_API_KEY`, `AFRICAS_TALKING_*`, `VAPID_PRIVATE_KEY` references in client code.
+- VAPID public key may stay client-side (it's public by design); private key stays server-only — confirm.
+
+⚠️ Rotation invalidates the current anon key immediately. Active browser sessions will need to reload. Confirm you want to proceed now vs. during a maintenance window.
+
+---
 
 ## Technical Details
-- Data insertion uses `INSERT` statements via the insert tool (not migration — no schema change)
-- All `reference_books` entries use `{title, author, url, isbn?}` JSON shape consumed by `ProtocolDetailModal`
-- All `video_url` entries use canonical `youtube.com/watch?v=...` URLs parsed by `ProtocolVideoResource.getYouTubeVideoId`
-- Categories `marine` and `environmental` will fall through to the default icon/color in `FirstAidProtocols.tsx` (acceptable — existing pattern)
+
+- **Migration**: creates `rate_limit_buckets` table (RLS deny-all), `consume_rate_limit(text, int, numeric, int)` SECURITY DEFINER function, and an index on `updated_at` for periodic cleanup. A `pg_cron`-free cleanup runs lazily inside the RPC (deletes rows older than 1 hour with full tokens).
+- **Shared modules**: `supabase/functions/_shared/rateLimit.ts`, `supabase/functions/_shared/validation.ts`, `supabase/functions/_shared/cors.ts` (consolidate the duplicated `getCorsHeaders` already present in 4+ functions).
+- **Edge function changes**: each function imports from `_shared/`, replaces ad-hoc validation + in-memory limiter with shared versions. Behavior stays identical for happy path; only failure modes (429/400) get more consistent.
+- **No frontend behavior changes** beyond CSRF/Zod tightening — chat, SOS, dashboards continue to work.
+
+---
+
+## Out of Scope
+
+- Redis (Postgres is sufficient at current scale and avoids a new infra dependency)
+- Distributed quotas across regions
+- WAF-level rate limiting (handled by Lovable/Supabase platform)
+
+---
+
+## Confirmations needed before I implement
+
+1. Proceed with **immediate** key rotation? (will invalidate current sessions)
+2. OK with **Postgres-backed** rate limiting (vs. waiting for first-class infra)?
+3. Default limits in the table above acceptable, or want different numbers?
