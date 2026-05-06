@@ -91,13 +91,6 @@ serve(async (req) => {
       throw new Error('Failed to update location');
     }
 
-    lastUpdateTimes.set(userId, now);
-
-    const oneHourAgo = now - 3600000;
-    for (const [key, time] of lastUpdateTimes.entries()) {
-      if (time < oneHourAgo) lastUpdateTimes.delete(key);
-    }
-
     console.log(`CHW location updated: ${userId.slice(0, 8)}...`);
 
     return new Response(
