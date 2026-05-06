@@ -51,26 +51,17 @@ serve(async (req) => {
 
     const userId = claims.claims.sub as string;
 
-    if (!checkRateLimit(userId, 5, 60000)) {
-      return new Response(
-        JSON.stringify({ error: 'Rate limit exceeded. Please wait a moment and try again.' }),
-        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const limited = await enforceLimits({
+      scope: 'emergency-alert', ip: getClientIP(req), userId,
+      ipLimitPerMin: 10, userLimitPerMin: 15, corsHeaders,
+    });
+    if (limited) return limited;
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    const rawBody = await req.json();
-    const validation = validateEmergencyInput(rawBody);
-    
-    if (!validation.valid || !validation.parsed) {
-      return new Response(
-        JSON.stringify({ error: validation.error || 'Invalid input' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const { symptoms, latitude, longitude, address, priority } = validation.parsed;
+    const parsed = await parseBody(req, EmergencyBodySchema);
+    if (!parsed.ok || !parsed.data) return badRequest(parsed.error!, corsHeaders);
+    const { symptoms, latitude, longitude, address, priority } = parsed.data;
 
     console.log('Emergency alert:', { userId: userId.slice(0, 8) + '...', priority, hasLocation: !!(latitude && longitude) });
 
