@@ -56,33 +56,16 @@ serve(async (req) => {
       );
     }
 
-    const lastUpdate = lastUpdateTimes.get(userId);
-    const now = Date.now();
-    
-    if (lastUpdate && (now - lastUpdate) < RATE_LIMIT_MS) {
-      const waitTime = Math.ceil((RATE_LIMIT_MS - (now - lastUpdate)) / 1000);
-      return new Response(
-        JSON.stringify({ error: `Rate limited - Please wait ${waitTime} seconds`, wait_seconds: waitTime }),
-        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    // Durable IP+user rate limit (≈ 2/min/user, plenty for legit beacons)
+    const limited = await enforceLimits({
+      scope: 'chw-location', ip: getClientIP(req), userId,
+      ipLimitPerMin: 60, userLimitPerMin: 2, corsHeaders,
+    });
+    if (limited) return limited;
 
-    const body = await req.json();
-    const { latitude, longitude } = body;
-
-    if (typeof latitude !== 'number' || typeof longitude !== 'number') {
-      return new Response(
-        JSON.stringify({ error: 'Invalid coordinates' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
-      return new Response(
-        JSON.stringify({ error: 'Coordinates out of range' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const parsed = await parseBody(req, LocationBodySchema);
+    if (!parsed.ok || !parsed.data) return badRequest(parsed.error!, corsHeaders);
+    const { latitude, longitude } = parsed.data;
 
     const { data: assignment, error: updateError } = await supabase
       .from('chw_assignments')
