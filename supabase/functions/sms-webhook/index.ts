@@ -62,18 +62,15 @@ serve(async (req) => {
   }
 
   try {
-    // Rate limit by IP
-    const clientIP = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
-    if (!checkRateLimit(`webhook:${clientIP}`, 100, 60000)) {
-      return new Response(
-        JSON.stringify({ error: 'Rate limit exceeded' }),
-        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const clientIP = getClientIP(req);
+    const limited = await enforceLimits({
+      scope: 'sms-webhook', ip: clientIP, ipLimitPerMin: 60, corsHeaders,
+    });
+    if (limited) return limited;
 
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    
+
     console.log('SMS webhook received from IP:', clientIP);
     
     let reportData: unknown;
