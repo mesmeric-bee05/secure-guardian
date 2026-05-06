@@ -1,117 +1,17 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
+import { z } from "https://esm.sh/zod@3.23.8";
+import { getCorsHeaders, getClientIP } from "../_shared/cors.ts";
+import { enforceLimits } from "../_shared/rateLimit.ts";
+import { parseBody, badRequest, LatSchema, LngSchema } from "../_shared/validation.ts";
 
-const ALLOWED_ORIGINS = [
-  'https://id-preview--a195f4d5-59f8-49b0-9a16-0b1c51758426.lovable.app',
-  'https://a195f4d5-59f8-49b0-9a16-0b1c51758426.lovableproject.com',
-];
-
-function getCorsHeaders(req: Request) {
-  const origin = req.headers.get('Origin') || '';
-  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
-  return {
-    'Access-Control-Allow-Origin': allowedOrigin,
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'X-Content-Type-Options': 'nosniff',
-  };
-}
-
-// Rate limiting (in-memory, per function instance)
-const rateLimiter = new Map<string, { count: number; resetAt: number }>();
-
-function checkRateLimit(userId: string, limit = 5, windowMs = 60000): boolean {
-  const now = Date.now();
-  const record = rateLimiter.get(userId);
-  
-  if (!record || record.resetAt < now) {
-    rateLimiter.set(userId, { count: 1, resetAt: now + windowMs });
-    return true;
-  }
-  
-  if (record.count >= limit) {
-    return false;
-  }
-  
-  record.count++;
-  return true;
-}
-
-// Input validation
-function validateEmergencyInput(data: unknown): { 
-  valid: boolean; 
-  error?: string; 
-  parsed?: { 
-    symptoms: string; 
-    latitude?: number; 
-    longitude?: number; 
-    address?: string; 
-    priority: 'low' | 'medium' | 'high' | 'critical';
-  } 
-} {
-  if (!data || typeof data !== 'object') {
-    return { valid: false, error: 'Invalid request body' };
-  }
-
-  const body = data as Record<string, unknown>;
-  
-  if (typeof body.symptoms !== 'string') {
-    return { valid: false, error: 'Symptoms must be a string' };
-  }
-  
-  const symptoms = body.symptoms.trim();
-  if (symptoms.length < 5) {
-    return { valid: false, error: 'Symptoms description too short (min 5 characters)' };
-  }
-  
-  if (symptoms.length > 1000) {
-    return { valid: false, error: 'Symptoms description too long (max 1000 characters)' };
-  }
-  
-  let latitude: number | undefined;
-  if (body.latitude !== undefined) {
-    if (typeof body.latitude !== 'number' || isNaN(body.latitude)) {
-      return { valid: false, error: 'Latitude must be a valid number' };
-    }
-    if (body.latitude < -90 || body.latitude > 90) {
-      return { valid: false, error: 'Latitude must be between -90 and 90' };
-    }
-    latitude = body.latitude;
-  }
-  
-  let longitude: number | undefined;
-  if (body.longitude !== undefined) {
-    if (typeof body.longitude !== 'number' || isNaN(body.longitude)) {
-      return { valid: false, error: 'Longitude must be a valid number' };
-    }
-    if (body.longitude < -180 || body.longitude > 180) {
-      return { valid: false, error: 'Longitude must be between -180 and 180' };
-    }
-    longitude = body.longitude;
-  }
-  
-  let address: string | undefined;
-  if (body.address !== undefined) {
-    if (typeof body.address !== 'string') {
-      return { valid: false, error: 'Address must be a string' };
-    }
-    if (body.address.length > 500) {
-      return { valid: false, error: 'Address too long (max 500 characters)' };
-    }
-    address = body.address.trim();
-  }
-  
-  const validPriorities = ['low', 'medium', 'high', 'critical'];
-  let priority: 'low' | 'medium' | 'high' | 'critical' = 'high';
-  if (body.priority !== undefined) {
-    if (typeof body.priority !== 'string' || !validPriorities.includes(body.priority)) {
-      return { valid: false, error: 'Priority must be one of: low, medium, high, critical' };
-    }
-    priority = body.priority as 'low' | 'medium' | 'high' | 'critical';
-  }
-  
-  return { valid: true, parsed: { symptoms, latitude, longitude, address, priority } };
-}
+const EmergencyBodySchema = z.object({
+  symptoms: z.string().trim().min(5).max(1000),
+  latitude: LatSchema.optional(),
+  longitude: LngSchema.optional(),
+  address: z.string().trim().max(500).optional(),
+  priority: z.enum(['low', 'medium', 'high', 'critical']).default('high'),
+}).strict();
 
 serve(async (req) => {
   const corsHeaders = getCorsHeaders(req);
