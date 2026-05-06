@@ -21,14 +21,10 @@ serve(async (req) => {
   }
 
   try {
-    // Rate limit by IP (20/min)
-    const clientIP = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
-    if (!checkRateLimit(`push:${clientIP}`, 20, 60000)) {
-      return new Response(
-        JSON.stringify({ error: 'Rate limit exceeded' }),
-        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const limited = await enforceLimits({
+      scope: 'send-push', ip: getClientIP(req), ipLimitPerMin: 60, corsHeaders,
+    });
+    if (limited) return limited;
 
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -59,15 +55,9 @@ serve(async (req) => {
       );
     }
 
-    const body = await req.json();
-    const { user_id, title, body: notifBody, data, tag } = body;
-
-    if (!user_id || !title) {
-      return new Response(
-        JSON.stringify({ error: 'user_id and title are required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const parsed = await parseBody(req, PushBodySchema);
+    if (!parsed.ok || !parsed.data) return badRequest(parsed.error!, corsHeaders);
+    const { user_id, title, body: notifBody, data, tag } = parsed.data;
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
