@@ -168,10 +168,15 @@ serve(async (req) => {
       return new Response('END Invalid request.', { headers: corsHeaders });
     }
 
-    // Rate limit per phone number (30/min)
-    if (!checkRateLimit(`ussd:${phoneNumber}`, 30, 60000)) {
-      return new Response('END Too many requests. Please try again later.', { headers: corsHeaders });
-    }
+    // Durable per-phone + per-IP limits (USSD callbacks)
+    const ipLimited = await enforceLimits({
+      scope: 'ussd-ip', ip: getClientIP(req), ipLimitPerMin: 120, corsHeaders,
+    });
+    if (ipLimited) return new Response('END Too many requests.', { headers: corsHeaders });
+    const phoneLimited = await enforceLimits({
+      scope: 'ussd-phone', ip: phoneNumber, ipLimitPerMin: 30, corsHeaders,
+    });
+    if (phoneLimited) return new Response('END Too many requests. Please try again later.', { headers: corsHeaders });
 
     console.log('USSD request:', { sessionId: sessionId.slice(0, 8) + '...', inputLength: text.length });
 
