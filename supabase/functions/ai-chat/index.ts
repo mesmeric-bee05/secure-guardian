@@ -1,91 +1,19 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
+import { z } from "https://esm.sh/zod@3.23.8";
+import { getCorsHeaders, getClientIP } from "../_shared/cors.ts";
+import { enforceLimits } from "../_shared/rateLimit.ts";
+import { parseBody, badRequest, LanguageSchema } from "../_shared/validation.ts";
 
-const ALLOWED_ORIGINS = [
-  'https://id-preview--a195f4d5-59f8-49b0-9a16-0b1c51758426.lovable.app',
-  'https://a195f4d5-59f8-49b0-9a16-0b1c51758426.lovableproject.com',
-];
-
-function getCorsHeaders(req: Request) {
-  const origin = req.headers.get('Origin') || '';
-  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
-  return {
-    'Access-Control-Allow-Origin': allowedOrigin,
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'X-Content-Type-Options': 'nosniff',
-  };
-}
-
-// Rate limiting (in-memory, per function instance)
-const rateLimiter = new Map<string, { count: number; resetAt: number }>();
-
-function checkRateLimit(userId: string, limit = 30, windowMs = 60000): boolean {
-  const now = Date.now();
-  const record = rateLimiter.get(userId);
-  
-  if (!record || record.resetAt < now) {
-    rateLimiter.set(userId, { count: 1, resetAt: now + windowMs });
-    return true;
-  }
-  
-  if (record.count >= limit) {
-    return false;
-  }
-  
-  record.count++;
-  return true;
-}
-
-// Input validation schema (manual implementation for Deno)
-function validateChatInput(data: unknown): { valid: boolean; error?: string; parsed?: { messages: Array<{ role: string; content: string }>; language: string } } {
-  if (!data || typeof data !== 'object') {
-    return { valid: false, error: 'Invalid request body' };
-  }
-
-  const body = data as Record<string, unknown>;
-  
-  if (!Array.isArray(body.messages)) {
-    return { valid: false, error: 'Messages must be an array' };
-  }
-  
-  if (body.messages.length === 0) {
-    return { valid: false, error: 'Messages array cannot be empty' };
-  }
-  
-  if (body.messages.length > 50) {
-    return { valid: false, error: 'Too many messages (max 50)' };
-  }
-  
-  for (const msg of body.messages) {
-    if (!msg || typeof msg !== 'object') {
-      return { valid: false, error: 'Invalid message format' };
-    }
-    const m = msg as Record<string, unknown>;
-    if (m.role !== 'user' && m.role !== 'assistant') {
-      return { valid: false, error: 'Invalid message role' };
-    }
-    if (typeof m.content !== 'string') {
-      return { valid: false, error: 'Message content must be a string' };
-    }
-    if (m.content.length > 4000) {
-      return { valid: false, error: 'Message content too long (max 4000 chars)' };
-    }
-  }
-  
-  const language = body.language as string || 'en';
-  if (language !== 'en' && language !== 'sw') {
-    return { valid: false, error: 'Language must be "en" or "sw"' };
-  }
-  
-  return { 
-    valid: true, 
-    parsed: { 
-      messages: body.messages as Array<{ role: string; content: string }>,
-      language 
-    } 
-  };
-}
+const ChatBodySchema = z.object({
+  messages: z.array(
+    z.object({
+      role: z.enum(['user', 'assistant']),
+      content: z.string().min(1).max(4000),
+    }).strict(),
+  ).min(1).max(50),
+  language: LanguageSchema.default('en'),
+}).strict();
 
 const SYSTEM_PROMPT_EN = `You are MediReach+ AI, a compassionate and knowledgeable first aid assistant. Your role is to provide clear, actionable first aid guidance for common medical emergencies.
 
@@ -180,26 +108,16 @@ serve(async (req) => {
 
     const userId = claims.claims.sub as string;
 
-    // Rate limiting
-    if (!checkRateLimit(userId)) {
-      return new Response(
-        JSON.stringify({ error: 'Rate limit exceeded. Please wait a moment and try again.' }),
-        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    // Durable IP+user rate limiting
+    const limited = await enforceLimits({
+      scope: 'ai-chat', ip: getClientIP(req), userId,
+      ipLimitPerMin: 20, userLimitPerMin: 30, corsHeaders,
+    });
+    if (limited) return limited;
 
-    // Parse and validate input
-    const rawBody = await req.json();
-    const validation = validateChatInput(rawBody);
-    
-    if (!validation.valid || !validation.parsed) {
-      return new Response(
-        JSON.stringify({ error: validation.error || 'Invalid input' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const { messages, language } = validation.parsed;
+    const parsed = await parseBody(req, ChatBodySchema);
+    if (!parsed.ok || !parsed.data) return badRequest(parsed.error!, corsHeaders);
+    const { messages, language } = parsed.data;
     const systemPrompt = language === 'sw' ? SYSTEM_PROMPT_SW : SYSTEM_PROMPT_EN;
 
     console.log('AI Chat request:', { userId: userId.slice(0, 8) + '...', messageCount: messages.length, language });

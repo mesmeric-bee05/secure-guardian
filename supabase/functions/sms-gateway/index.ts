@@ -1,88 +1,14 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
+import { z } from "https://esm.sh/zod@3.23.8";
+import { getCorsHeaders, getClientIP } from "../_shared/cors.ts";
+import { enforceLimits } from "../_shared/rateLimit.ts";
+import { parseBody, badRequest, PhoneSchema } from "../_shared/validation.ts";
 
-const ALLOWED_ORIGINS = [
-  'https://id-preview--a195f4d5-59f8-49b0-9a16-0b1c51758426.lovable.app',
-  'https://a195f4d5-59f8-49b0-9a16-0b1c51758426.lovableproject.com',
-];
-
-function getCorsHeaders(req: Request) {
-  const origin = req.headers.get('Origin') || '';
-  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
-  return {
-    'Access-Control-Allow-Origin': allowedOrigin,
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'X-Content-Type-Options': 'nosniff',
-  };
-}
-
-// Rate limiting (in-memory, per function instance)
-const rateLimiter = new Map<string, { count: number; resetAt: number }>();
-
-function checkRateLimit(userId: string, limit = 10, windowMs = 60000): boolean {
-  const now = Date.now();
-  const record = rateLimiter.get(userId);
-  
-  if (!record || record.resetAt < now) {
-    rateLimiter.set(userId, { count: 1, resetAt: now + windowMs });
-    return true;
-  }
-  
-  if (record.count >= limit) {
-    return false;
-  }
-  
-  record.count++;
-  return true;
-}
-
-// Input validation
-function validateSMSInput(data: unknown): { valid: boolean; error?: string; parsed?: { to: string[]; message: string } } {
-  if (!data || typeof data !== 'object') {
-    return { valid: false, error: 'Invalid request body' };
-  }
-
-  const body = data as Record<string, unknown>;
-  
-  let recipients: string[] = [];
-  if (typeof body.to === 'string') {
-    recipients = [body.to];
-  } else if (Array.isArray(body.to)) {
-    recipients = body.to.filter((t): t is string => typeof t === 'string');
-  } else {
-    return { valid: false, error: 'Missing or invalid "to" field' };
-  }
-  
-  if (recipients.length === 0) {
-    return { valid: false, error: 'At least one recipient is required' };
-  }
-  
-  if (recipients.length > 10) {
-    return { valid: false, error: 'Maximum 10 recipients allowed' };
-  }
-  
-  const phoneRegex = /^\+?[0-9]{10,15}$/;
-  for (const phone of recipients) {
-    if (!phoneRegex.test(phone.replace(/\s/g, ''))) {
-      return { valid: false, error: `Invalid phone number format` };
-    }
-  }
-  
-  if (typeof body.message !== 'string') {
-    return { valid: false, error: 'Message must be a string' };
-  }
-  
-  if (body.message.length === 0) {
-    return { valid: false, error: 'Message cannot be empty' };
-  }
-  
-  if (body.message.length > 1600) {
-    return { valid: false, error: 'Message too long (max 1600 characters)' };
-  }
-  
-  return { valid: true, parsed: { to: recipients, message: body.message } };
-}
+const SmsBodySchema = z.object({
+  to: z.union([PhoneSchema, z.array(PhoneSchema).min(1).max(10)]),
+  message: z.string().trim().min(1).max(1600),
+}).strict();
 
 serve(async (req) => {
   const corsHeaders = getCorsHeaders(req);
@@ -126,28 +52,20 @@ serve(async (req) => {
 
     const userId = claims.claims.sub as string;
 
-    if (!checkRateLimit(userId, 10, 60000)) {
-      return new Response(
-        JSON.stringify({ error: 'Rate limit exceeded. Please wait a moment and try again.' }),
-        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const limited = await enforceLimits({
+      scope: 'sms-gateway', ip: getClientIP(req), userId,
+      ipLimitPerMin: 10, userLimitPerMin: 20, corsHeaders,
+    });
+    if (limited) return limited;
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    const rawBody = await req.json();
-    const validation = validateSMSInput(rawBody);
-    
-    if (!validation.valid || !validation.parsed) {
-      return new Response(
-        JSON.stringify({ error: validation.error || 'Invalid input' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const parsed = await parseBody(req, SmsBodySchema);
+    if (!parsed.ok || !parsed.data) return badRequest(parsed.error!, corsHeaders);
+    const { to, message } = parsed.data;
+    const recipients = Array.isArray(to) ? to : [to];
 
-    const { to, message } = validation.parsed;
-
-    const formattedRecipients = to.map(phone => {
+    const formattedRecipients = recipients.map((phone) => {
       const cleaned = phone.replace(/\s/g, '');
       if (cleaned.startsWith('+')) return cleaned;
       if (cleaned.startsWith('0')) return '+254' + cleaned.slice(1);

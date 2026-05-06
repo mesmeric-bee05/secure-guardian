@@ -1,35 +1,17 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
+import { z } from "https://esm.sh/zod@3.23.8";
+import { getCorsHeaders, getClientIP } from "../_shared/cors.ts";
+import { enforceLimits } from "../_shared/rateLimit.ts";
+import { parseBody, badRequest, UuidSchema } from "../_shared/validation.ts";
 
-const ALLOWED_ORIGINS = [
-  'https://id-preview--a195f4d5-59f8-49b0-9a16-0b1c51758426.lovable.app',
-  'https://a195f4d5-59f8-49b0-9a16-0b1c51758426.lovableproject.com',
-];
-
-function getCorsHeaders(req: Request) {
-  const origin = req.headers.get('Origin') || '';
-  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
-  return {
-    'Access-Control-Allow-Origin': allowedOrigin,
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'X-Content-Type-Options': 'nosniff',
-  };
-}
-
-// Rate limiting
-const rateLimiter = new Map<string, { count: number; resetAt: number }>();
-function checkRateLimit(key: string, limit: number, windowMs: number): boolean {
-  const now = Date.now();
-  const entry = rateLimiter.get(key);
-  if (!entry || now > entry.resetAt) {
-    rateLimiter.set(key, { count: 1, resetAt: now + windowMs });
-    return true;
-  }
-  if (entry.count >= limit) return false;
-  entry.count++;
-  return true;
-}
+const PushBodySchema = z.object({
+  user_id: UuidSchema,
+  title: z.string().trim().min(1).max(120),
+  body: z.string().trim().max(500).optional(),
+  tag: z.string().trim().max(120).optional(),
+  data: z.record(z.string(), z.unknown()).optional(),
+}).strict();
 
 serve(async (req) => {
   const corsHeaders = getCorsHeaders(req);
@@ -39,14 +21,10 @@ serve(async (req) => {
   }
 
   try {
-    // Rate limit by IP (20/min)
-    const clientIP = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
-    if (!checkRateLimit(`push:${clientIP}`, 20, 60000)) {
-      return new Response(
-        JSON.stringify({ error: 'Rate limit exceeded' }),
-        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const limited = await enforceLimits({
+      scope: 'send-push', ip: getClientIP(req), ipLimitPerMin: 60, corsHeaders,
+    });
+    if (limited) return limited;
 
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -77,15 +55,9 @@ serve(async (req) => {
       );
     }
 
-    const body = await req.json();
-    const { user_id, title, body: notifBody, data, tag } = body;
-
-    if (!user_id || !title) {
-      return new Response(
-        JSON.stringify({ error: 'user_id and title are required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const parsed = await parseBody(req, PushBodySchema);
+    if (!parsed.ok || !parsed.data) return badRequest(parsed.error!, corsHeaders);
+    const { user_id, title, body: notifBody, data, tag } = parsed.data;
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 

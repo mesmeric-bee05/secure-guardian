@@ -1,26 +1,15 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
+import { getClientIP } from "../_shared/cors.ts";
+import { enforceLimits } from "../_shared/rateLimit.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Content-Type': 'text/plain',
   'X-Content-Type-Options': 'nosniff',
 };
-
-// Rate limiting (100/min per IP)
-const rateLimiter = new Map<string, { count: number; resetAt: number }>();
-function checkRateLimit(key: string, limit: number, windowMs: number): boolean {
-  const now = Date.now();
-  const entry = rateLimiter.get(key);
-  if (!entry || now > entry.resetAt) {
-    rateLimiter.set(key, { count: 1, resetAt: now + windowMs });
-    return true;
-  }
-  if (entry.count >= limit) return false;
-  entry.count++;
-  return true;
-}
 
 // Replay attack prevention
 const processedMessages = new Map<string, number>();
@@ -73,18 +62,15 @@ serve(async (req) => {
   }
 
   try {
-    // Rate limit by IP
-    const clientIP = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
-    if (!checkRateLimit(`webhook:${clientIP}`, 100, 60000)) {
-      return new Response(
-        JSON.stringify({ error: 'Rate limit exceeded' }),
-        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const clientIP = getClientIP(req);
+    const limited = await enforceLimits({
+      scope: 'sms-webhook', ip: clientIP, ipLimitPerMin: 60, corsHeaders,
+    });
+    if (limited) return limited;
 
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    
+
     console.log('SMS webhook received from IP:', clientIP);
     
     let reportData: unknown;

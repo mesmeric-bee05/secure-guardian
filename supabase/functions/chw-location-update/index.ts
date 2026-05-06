@@ -1,23 +1,14 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
+import { z } from "https://esm.sh/zod@3.23.8";
+import { getCorsHeaders, getClientIP } from "../_shared/cors.ts";
+import { enforceLimits } from "../_shared/rateLimit.ts";
+import { parseBody, badRequest, LatSchema, LngSchema } from "../_shared/validation.ts";
 
-const ALLOWED_ORIGINS = [
-  'https://id-preview--a195f4d5-59f8-49b0-9a16-0b1c51758426.lovable.app',
-  'https://a195f4d5-59f8-49b0-9a16-0b1c51758426.lovableproject.com',
-];
-
-function getCorsHeaders(req: Request) {
-  const origin = req.headers.get('Origin') || '';
-  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
-  return {
-    'Access-Control-Allow-Origin': allowedOrigin,
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
-  };
-}
-
-// Rate limiting: track last update time per CHW
-const lastUpdateTimes = new Map<string, number>();
-const RATE_LIMIT_MS = 30000;
+const LocationBodySchema = z.object({
+  latitude: LatSchema,
+  longitude: LngSchema,
+}).strict();
 
 serve(async (req) => {
   const corsHeaders = getCorsHeaders(req);
@@ -65,33 +56,16 @@ serve(async (req) => {
       );
     }
 
-    const lastUpdate = lastUpdateTimes.get(userId);
-    const now = Date.now();
-    
-    if (lastUpdate && (now - lastUpdate) < RATE_LIMIT_MS) {
-      const waitTime = Math.ceil((RATE_LIMIT_MS - (now - lastUpdate)) / 1000);
-      return new Response(
-        JSON.stringify({ error: `Rate limited - Please wait ${waitTime} seconds`, wait_seconds: waitTime }),
-        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    // Durable IP+user rate limit (≈ 2/min/user, plenty for legit beacons)
+    const limited = await enforceLimits({
+      scope: 'chw-location', ip: getClientIP(req), userId,
+      ipLimitPerMin: 60, userLimitPerMin: 2, corsHeaders,
+    });
+    if (limited) return limited;
 
-    const body = await req.json();
-    const { latitude, longitude } = body;
-
-    if (typeof latitude !== 'number' || typeof longitude !== 'number') {
-      return new Response(
-        JSON.stringify({ error: 'Invalid coordinates' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
-      return new Response(
-        JSON.stringify({ error: 'Coordinates out of range' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const parsed = await parseBody(req, LocationBodySchema);
+    if (!parsed.ok || !parsed.data) return badRequest(parsed.error!, corsHeaders);
+    const { latitude, longitude } = parsed.data;
 
     const { data: assignment, error: updateError } = await supabase
       .from('chw_assignments')
@@ -115,13 +89,6 @@ serve(async (req) => {
       }
       
       throw new Error('Failed to update location');
-    }
-
-    lastUpdateTimes.set(userId, now);
-
-    const oneHourAgo = now - 3600000;
-    for (const [key, time] of lastUpdateTimes.entries()) {
-      if (time < oneHourAgo) lastUpdateTimes.delete(key);
     }
 
     console.log(`CHW location updated: ${userId.slice(0, 8)}...`);

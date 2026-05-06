@@ -1,35 +1,16 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
+import { z } from "https://esm.sh/zod@3.23.8";
+import { getCorsHeaders, getClientIP } from "../_shared/cors.ts";
+import { enforceLimits } from "../_shared/rateLimit.ts";
+import { parseBody, badRequest, UuidSchema } from "../_shared/validation.ts";
 
-const ALLOWED_ORIGINS = [
-  'https://id-preview--a195f4d5-59f8-49b0-9a16-0b1c51758426.lovable.app',
-  'https://a195f4d5-59f8-49b0-9a16-0b1c51758426.lovableproject.com',
-];
-
-function getCorsHeaders(req: Request) {
-  const origin = req.headers.get('Origin') || '';
-  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
-  return {
-    'Access-Control-Allow-Origin': allowedOrigin,
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'X-Content-Type-Options': 'nosniff',
-  };
-}
-
-// Rate limiting (5/min per user)
-const rateLimiter = new Map<string, { count: number; resetAt: number }>();
-function checkRateLimit(key: string, limit: number, windowMs: number): boolean {
-  const now = Date.now();
-  const entry = rateLimiter.get(key);
-  if (!entry || now > entry.resetAt) {
-    rateLimiter.set(key, { count: 1, resetAt: now + windowMs });
-    return true;
-  }
-  if (entry.count >= limit) return false;
-  entry.count++;
-  return true;
-}
+const RetryBodySchema = z.object({
+  sms_log_ids: z.array(UuidSchema).min(1).max(50).optional(),
+  retry_all_failed: z.boolean().optional(),
+}).strict().refine(d => d.sms_log_ids || d.retry_all_failed, {
+  message: 'Provide sms_log_ids or retry_all_failed',
+});
 
 const MAX_RETRIES = 3;
 const CONCURRENT_LIMIT = 5;
@@ -76,18 +57,15 @@ serve(async (req) => {
 
     const userId = claims.user.id;
 
-    // Rate limit per user (5/min)
-    if (!checkRateLimit(`retry:${userId}`, 5, 60000)) {
-      return new Response(
-        JSON.stringify({ error: 'Rate limit exceeded. Please wait before retrying.' }),
-        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const limited = await enforceLimits({
+      scope: 'sms-retry', ip: getClientIP(req), userId,
+      ipLimitPerMin: 10, userLimitPerMin: 5, corsHeaders,
+    });
+    if (limited) return limited;
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-    
+
     const { data: isAdmin } = await supabase.rpc('is_admin', { _user_id: userId });
-    
     if (!isAdmin) {
       return new Response(
         JSON.stringify({ error: 'Forbidden - Admin access required' }),
@@ -95,8 +73,9 @@ serve(async (req) => {
       );
     }
 
-    const body = await req.json();
-    const { sms_log_ids, retry_all_failed } = body;
+    const parsed = await parseBody(req, RetryBodySchema);
+    if (!parsed.ok || !parsed.data) return badRequest(parsed.error!, corsHeaders);
+    const { sms_log_ids, retry_all_failed } = parsed.data;
 
     let targetIds: string[] = [];
     

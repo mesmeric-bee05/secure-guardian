@@ -418,6 +418,24 @@ export type Database = {
         }
         Relationships: []
       }
+      rate_limit_buckets: {
+        Row: {
+          bucket_key: string
+          tokens: number
+          updated_at: string
+        }
+        Insert: {
+          bucket_key: string
+          tokens: number
+          updated_at?: string
+        }
+        Update: {
+          bucket_key?: string
+          tokens?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       sms_logs: {
         Row: {
           created_at: string | null
@@ -534,6 +552,15 @@ export type Database = {
       calculate_distance_km: {
         Args: { lat1: number; lat2: number; lng1: number; lng2: number }
         Returns: number
+      }
+      consume_rate_limit: {
+        Args: {
+          _capacity: number
+          _cost?: number
+          _key: string
+          _refill_per_sec: number
+        }
+        Returns: Json
       }
       find_nearest_chw: {
         Args: {
