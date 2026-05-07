@@ -436,6 +436,39 @@ export type Database = {
         }
         Relationships: []
       }
+      security_events: {
+        Row: {
+          created_at: string
+          details: Json | null
+          event_type: string
+          id: string
+          ip_address: string | null
+          scope: string | null
+          severity: string
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          details?: Json | null
+          event_type: string
+          id?: string
+          ip_address?: string | null
+          scope?: string | null
+          severity?: string
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          details?: Json | null
+          event_type?: string
+          id?: string
+          ip_address?: string | null
+          scope?: string | null
+          severity?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       sms_logs: {
         Row: {
           created_at: string | null
@@ -584,6 +617,23 @@ export type Database = {
       }
       is_admin: { Args: { _user_id: string }; Returns: boolean }
       is_chw: { Args: { _user_id: string }; Returns: boolean }
+      security_events_summary: {
+        Args: { _since: string }
+        Returns: {
+          count: number
+          event_type: string
+          scope: string
+        }[]
+      }
+      security_top_ips: {
+        Args: { _limit?: number; _since: string }
+        Returns: {
+          ip_address: string
+          rate_limit_hits: number
+          total: number
+          validation_failures: number
+        }[]
+      }
     }
     Enums: {
       app_role: "user" | "chw" | "admin"
