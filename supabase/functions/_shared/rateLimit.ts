@@ -86,6 +86,14 @@ export async function enforceLimits(opts: {
   const blocked = results.find((r) => !r.allowed);
   if (!blocked) return null;
   const retry = Math.max(1, Math.ceil(blocked.retryAfterSeconds));
+  logSecurityEvent({
+    event_type: "rate_limit_429",
+    scope: opts.scope,
+    ip_address: opts.ip,
+    user_id: opts.userId ?? null,
+    details: { retry_after_seconds: retry, remaining: blocked.remaining },
+    severity: "warn",
+  });
   return new Response(
     JSON.stringify({
       error: 'Rate limit exceeded. Please try again shortly.',
@@ -98,6 +106,7 @@ export async function enforceLimits(opts: {
         'Content-Type': 'application/json',
         'Retry-After': String(retry),
         'X-RateLimit-Remaining': String(Math.max(0, blocked.remaining)),
+        'X-RateLimit-Limit': String(opts.ipLimitPerMin),
       },
     },
   );
