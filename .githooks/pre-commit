@@ -1,0 +1,9 @@
+#!/usr/bin/env sh
+# Pre-commit hook: blocks commits that reintroduce forbidden client-side secrets.
+# Install: cp .githooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+# Or: git config core.hooksPath .githooks
+node scripts/scan-secrets.mjs || {
+  echo ""
+  echo "Commit aborted by secret-scan."
+  exit 1
+}
