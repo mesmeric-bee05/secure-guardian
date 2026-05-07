@@ -14,8 +14,9 @@ import { Loader2 } from 'lucide-react';
 
 const ReportsPage = lazy(() => import('@/pages/Reports'));
 const AnalyticsDashboardTab = lazy(() => import('@/components/admin/AnalyticsDashboardTab'));
+const SecurityEventsTab = lazy(() => import('@/components/admin/SecurityEventsTab'));
 
-type AdminTab = 'users' | 'facilities' | 'protocols' | 'audit' | 'chw' | 'sms' | 'reports' | 'analytics';
+type AdminTab = 'users' | 'facilities' | 'protocols' | 'audit' | 'chw' | 'sms' | 'reports' | 'analytics' | 'security';
 
 export default function Admin() {
   const navigate = useNavigate();
