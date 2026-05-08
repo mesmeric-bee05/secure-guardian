@@ -1,103 +1,74 @@
-## Goals
+# Security Events: Filters, Retention & Test Coverage
 
-1. **Durable rate limiting** backed by Postgres (survives cold starts, shared across instances)
-2. **Validation audit + hardening** of every edge function with Zod (strict schemas, length caps, `.strict()` to reject unknown fields)
-3. **Best-effort IP+user token-bucket** on every public endpoint with proper 429 + `Retry-After`
-4. **Rotate all server API keys** and confirm no secret leaks to the client
+Four focused workstreams, all building on the existing `security_events` table, `_shared/rateLimit.ts`, `_shared/validation.ts`, and `SecurityEventsTab.tsx`.
 
----
+## 1. Dashboard filtering + CSV export
 
-## 1. Durable Rate Limiting (Postgres-backed)
+Update `src/components/admin/SecurityEventsTab.tsx`:
 
-Create a shared `rate_limit_buckets` table + `consume_rate_limit` SQL function (atomic token bucket via `UPDATE ... RETURNING`). Counters persist across cold starts and are consistent across all edge function instances.
+- Add a filter bar above the stat cards:
+  - **Event type** select: `all | rate_limit_429 | validation_failed | suspicious | auth_failed`
+  - **Scope** select: dynamically populated from the current result set (plus free-text search)
+  - **IP** text input (substring match, debounced)
+  - **User ID** text input (UUID, exact match)
+  - **Severity** select: `all | info | warn | critical`
+- Filters apply both to the recent-events table and to a new query that drives totals/chart for the current filter set.
+- Push filters into the Supabase query (`ilike` for IP/scope, `eq` for type/severity/user) so we don't blow past the 1000-row cap when investigating.
+- Add an **Export CSV** button (reuse the pattern from `src/components/reports/CSVExportButton.tsx`) that exports the currently-filtered events with columns: `created_at, event_type, scope, severity, ip_address, user_id, details (JSON)`.
+- Empty/loading states updated for filtered views.
 
-```text
-rate_limit_buckets
-  bucket_key TEXT PK     -- e.g. "ai-chat:ip:1.2.3.4" or "ai-chat:user:<uuid>"
-  tokens     NUMERIC
-  updated_at TIMESTAMPTZ
-```
+No backend changes required for this step — RLS already restricts `security_events` to admins.
 
-`consume_rate_limit(key, capacity, refill_per_sec, cost)` returns `{allowed, remaining, retry_after_seconds}` — all logic inside one atomic SQL call. RLS deny-all (service role only).
+## 2. Retention + indexes for `security_events`
 
-Shared helper: `supabase/functions/_shared/rateLimit.ts` — wraps the RPC, derives keys from IP (`x-forwarded-for`) and authenticated user id, returns a 429 JSON response with `Retry-After` header when blocked.
+New migration:
 
-Per-endpoint defaults (tunable):
+- Indexes (all `IF NOT EXISTS`):
+  - `(created_at DESC)` — primary dashboard sort
+  - `(event_type, created_at DESC)` — type-filtered queries
+  - `(scope, created_at DESC)` — scope-filtered queries + chart aggregation
+  - `(ip_address, created_at DESC)` WHERE `ip_address IS NOT NULL` — top-IP RPC
+  - `(user_id, created_at DESC)` WHERE `user_id IS NOT NULL`
+- Retention via scheduled cleanup (simpler and safer than partitioning for current volume):
+  - SECURITY DEFINER function `purge_security_events(_older_than interval default '90 days')` that deletes old rows.
+  - `pg_cron` job (if extension available) running daily at 03:00 UTC to call it; if `pg_cron` is not enabled in this project, fall back to a lightweight in-RPC opportunistic purge (≈1% sampled, same pattern as `consume_rate_limit`).
+- Same treatment for the `rate_limit_buckets` table indexing if needed (already cleaned lazily, just confirm).
 
-| Function | IP/min | User/min |
-|---|---|---|
-| ai-chat | 20 | 30 |
-| sms-gateway | 10 | 20 |
-| sms-webhook | 60 | — |
-| ussd-handler | 30 | — |
-| emergency-alert | 10 | 15 |
-| chw-location-update | 60 | 30 (already 1/30s) |
-| send-push-notification | 60 | — (service-role only) |
-| notify-case-update | 30 | 30 |
-| sms-retry | 10 | — |
+## 3. End-to-end 429 tests across multiple public edge functions
 
----
+New file `supabase/functions/_shared/rateLimit.e2e.test.ts` (uses Deno + `dotenv/load.ts`, run via `supabase--test_edge_functions`):
 
-## 2. Validation Audit (Zod everywhere)
+- Iterates over a list of public endpoints: `ai-chat`, `emergency-alert`, `sms-webhook`, `ussd-handler`, `chw-location-update`.
+- For each: bursts requests above the configured limit using a unique fake IP via `x-forwarded-for` header so tests don't pollute real buckets.
+- Asserts at least one response returns:
+  - `status === 429`
+  - `Retry-After` header present and numeric > 0
+  - `X-RateLimit-Limit` and `X-RateLimit-Remaining` headers present
+  - JSON body contains `retry_after_seconds: number` and `error: string`
+- Each request body uses the minimal valid payload for that endpoint to ensure we hit the limiter, not the validator.
 
-Add `_shared/validation.ts` with reusable Zod primitives (phone, uuid, language, bounded text). For each function, define a `BodySchema = z.object({...}).strict()` so unknown fields are rejected. Length caps on every string. Numeric range checks on coordinates.
+## 4. Integration tests for validation → 400 + logged event
 
-Audit checklist per function:
+New file `supabase/functions/_shared/validation.e2e.test.ts`:
 
-- `ai-chat` — verify schema covers `messages[].role/content`, `language`, `sessionId`; cap message count + content length; `.strict()`
-- `sms-gateway` — phone E.164 regex, message ≤ 160 chars (or document multi-part), `.strict()`
-- `sms-webhook` — provider payload schema, signature/source check
-- `sms-retry` — admin-only, validate `messageId`
-- `ussd-handler` — `sessionId`, `phoneNumber`, `text` length cap, `.strict()`
-- `emergency-alert` — symptoms text cap, lat/lng range, optional notes cap
-- `chw-location-update` — already validates lat/lng; add `.strict()` and reject extra fields
-- `send-push-notification` — title/body length caps, `data` size cap
-- `notify-case-update` — uuid for case_id, enum for new_status (already partial)
-
-Client-side: confirm `src/lib/validations.ts` Zod schemas mirror server caps for: profile, emergency contact, onboarding, chat input (already 2000 char cap), SOS form. Add any missing `.max()`/`.strict()`.
-
----
-
-## 3. 429 Response Contract
-
-Every public endpoint returns:
-```json
-{ "error": "Rate limit exceeded", "retry_after_seconds": <n> }
-```
-with headers `Retry-After: <n>`, `X-RateLimit-Remaining: <n>`. Replace existing in-memory `Map`-based limiters in `chw-location-update`, `notify-case-update`, `send-push-notification` with the shared Postgres helper.
-
----
-
-## 4. Secret Rotation & Client Exposure Audit
-
-- Run `supabase--rotate_api_keys` (rotates anon + service role; updates `.env` automatically)
-- Run `ai_gateway--rotate_lovable_api_key` (rotates `LOVABLE_API_KEY`)
-- Grep audit: confirm only `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` appear under `src/`. Verify no `SERVICE_ROLE`, `LOVABLE_API_KEY`, `AFRICAS_TALKING_*`, `VAPID_PRIVATE_KEY` references in client code.
-- VAPID public key may stay client-side (it's public by design); private key stays server-only — confirm.
-
-⚠️ Rotation invalidates the current anon key immediately. Active browser sessions will need to reload. Confirm you want to proceed now vs. during a maintenance window.
-
----
+- For 3 endpoints with strict Zod schemas (`ai-chat`, `chw-location-update`, `emergency-alert`):
+  - Send a deliberately invalid body (extra field, wrong type, out-of-range lat/lng).
+  - Assert response `status === 400`, JSON body has `error: string`.
+  - Poll `security_events` (via service-role client) for up to 5s to find a row with `event_type='validation_failed'` and `scope` matching the endpoint, then assert `details.error` and `details.issues` are populated.
+- Cleanup: delete the inserted test rows at end of each test (filtered by a unique scope tag we inject through `x-test-tag` if helpful, otherwise by `created_at >= testStart` and matching scope).
 
 ## Technical Details
 
-- **Migration**: creates `rate_limit_buckets` table (RLS deny-all), `consume_rate_limit(text, int, numeric, int)` SECURITY DEFINER function, and an index on `updated_at` for periodic cleanup. A `pg_cron`-free cleanup runs lazily inside the RPC (deletes rows older than 1 hour with full tokens).
-- **Shared modules**: `supabase/functions/_shared/rateLimit.ts`, `supabase/functions/_shared/validation.ts`, `supabase/functions/_shared/cors.ts` (consolidate the duplicated `getCorsHeaders` already present in 4+ functions).
-- **Edge function changes**: each function imports from `_shared/`, replaces ad-hoc validation + in-memory limiter with shared versions. Behavior stays identical for happy path; only failure modes (429/400) get more consistent.
-- **No frontend behavior changes** beyond CSRF/Zod tightening — chat, SOS, dashboards continue to work.
+- All new tests follow the existing pattern in `rateLimit.test.ts`: `import "https://deno.land/std@0.224.0/dotenv/load.ts"` and read `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY` (+ `SUPABASE_SERVICE_ROLE_KEY` for verification queries) from env. Always `await response.text()` to avoid Deno resource leaks.
+- CSV export uses client-side blob download; no new edge function needed.
+- Migration uses `CREATE INDEX CONCURRENTLY` only outside transactions — since Lovable migrations run in a transaction, use plain `CREATE INDEX IF NOT EXISTS`.
+- Retention default 90 days, configurable by passing an interval to `purge_security_events`.
 
----
+## Files to change
 
-## Out of Scope
+- Edit `src/components/admin/SecurityEventsTab.tsx` (filters + CSV)
+- New migration: indexes + `purge_security_events` function + optional `pg_cron` schedule
+- New `supabase/functions/_shared/rateLimit.e2e.test.ts`
+- New `supabase/functions/_shared/validation.e2e.test.ts`
 
-- Redis (Postgres is sufficient at current scale and avoids a new infra dependency)
-- Distributed quotas across regions
-- WAF-level rate limiting (handled by Lovable/Supabase platform)
-
----
-
-## Confirmations needed before I implement
-
-1. Proceed with **immediate** key rotation? (will invalidate current sessions)
-2. OK with **Postgres-backed** rate limiting (vs. waiting for first-class infra)?
-3. Default limits in the table above acceptable, or want different numbers?
+No edge-function source changes needed — existing `enforceLimits` and `badRequest` already emit the required headers and security events.

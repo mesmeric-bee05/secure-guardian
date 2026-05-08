@@ -617,6 +617,7 @@ export type Database = {
       }
       is_admin: { Args: { _user_id: string }; Returns: boolean }
       is_chw: { Args: { _user_id: string }; Returns: boolean }
+      purge_security_events: { Args: { _older_than?: string }; Returns: number }
       security_events_summary: {
         Args: { _since: string }
         Returns: {
