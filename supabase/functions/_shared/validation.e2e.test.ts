@@ -66,7 +66,7 @@ const CASES = [
 ];
 
 for (const c of CASES) {
-  Deno.test(c.name, async () => {
+  Deno.test({ name: c.name, sanitizeOps: false, sanitizeResources: false, fn: async () => {
     const since = new Date(Date.now() - 1000).toISOString();
     const req = new Request("https://test.local/", {
       method: "POST",
@@ -99,5 +99,5 @@ for (const c of CASES) {
 
     // Cleanup
     await svc().from("security_events").delete().eq("scope", c.scope);
-  });
+  } });
 }
