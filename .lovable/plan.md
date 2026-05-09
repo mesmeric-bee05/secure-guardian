@@ -1,74 +1,63 @@
-# Security Events: Filters, Retention & Test Coverage
+# Plan: Secure CSV export, cursor pagination, and test-leak fix
 
-Four focused workstreams, all building on the existing `security_events` table, `_shared/rateLimit.ts`, `_shared/validation.ts`, and `SecurityEventsTab.tsx`.
+Three focused changes. All scoped to the Security Events feature + test infra.
 
-## 1. Dashboard filtering + CSV export
+## 1. Server-side CSV export edge function (admin-only, streaming)
 
-Update `src/components/admin/SecurityEventsTab.tsx`:
+**New file:** `supabase/functions/security-events-export/index.ts`
 
-- Add a filter bar above the stat cards:
-  - **Event type** select: `all | rate_limit_429 | validation_failed | suspicious | auth_failed`
-  - **Scope** select: dynamically populated from the current result set (plus free-text search)
-  - **IP** text input (substring match, debounced)
-  - **User ID** text input (UUID, exact match)
-  - **Severity** select: `all | info | warn | critical`
-- Filters apply both to the recent-events table and to a new query that drives totals/chart for the current filter set.
-- Push filters into the Supabase query (`ilike` for IP/scope, `eq` for type/severity/user) so we don't blow past the 1000-row cap when investigating.
-- Add an **Export CSV** button (reuse the pattern from `src/components/reports/CSVExportButton.tsx`) that exports the currently-filtered events with columns: `created_at, event_type, scope, severity, ip_address, user_id, details (JSON)`.
-- Empty/loading states updated for filtered views.
+- POST endpoint, CORS via `_shared/cors.ts`, rate-limited via `enforceLimits` (scope `security-events-export`, 5 req/min per IP, 10/min per user).
+- Auth: requires Bearer JWT. Resolve user with anon-key client, then call `is_admin(_user_id)` via service-role RPC. Non-admins → 403 (also logs `auth_failed` security event).
+- Body schema (Zod, strict): `since` (ISO datetime), `eventType?`, `severity?`, `scopeContains?`, `ipContains?`, `userId?` (uuid). Mirrors dashboard filters.
+- Hard cap: max 50,000 rows per export (`MAX_ROWS`). Page through service-role client in batches of 1,000 keyset-paginated by `(created_at desc, id desc)`. Stop early at cap and append a trailing `# truncated_at_max_rows=50000` comment row.
+- Response is a streamed `text/csv` body using a `ReadableStream` controller — write header row, then enqueue each batch as it arrives (no buffering full result set in memory). Headers include `Content-Disposition: attachment; filename="security-events-<ISO>.csv"`, `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`.
+- All filter activity logged to `audit_logs` (action `security_events_export`, details = filters + row count).
 
-No backend changes required for this step — RLS already restricts `security_events` to admins.
+**`supabase/config.toml`:** add `[functions.security-events-export]` with `verify_jwt = false` (we validate the JWT in code, same pattern as siblings).
 
-## 2. Retention + indexes for `security_events`
+**Frontend wiring (`src/components/admin/SecurityEventsTab.tsx`):**
+- "CSV" button now calls the edge function via `supabase.functions.invoke('security-events-export', { body: <filters+since> })` with `responseType: 'blob'`-style handling (use `fetch` against `${VITE_SUPABASE_URL}/functions/v1/...` with the user's access token to keep streaming).
+- Replace the existing client-side blob assembly. Show a small spinner + toast on download; surface 403/429 messages from the response body.
 
-New migration:
+## 2. Cursor-based pagination for Security Events
 
-- Indexes (all `IF NOT EXISTS`):
-  - `(created_at DESC)` — primary dashboard sort
-  - `(event_type, created_at DESC)` — type-filtered queries
-  - `(scope, created_at DESC)` — scope-filtered queries + chart aggregation
-  - `(ip_address, created_at DESC)` WHERE `ip_address IS NOT NULL` — top-IP RPC
-  - `(user_id, created_at DESC)` WHERE `user_id IS NOT NULL`
-- Retention via scheduled cleanup (simpler and safer than partitioning for current volume):
-  - SECURITY DEFINER function `purge_security_events(_older_than interval default '90 days')` that deletes old rows.
-  - `pg_cron` job (if extension available) running daily at 03:00 UTC to call it; if `pg_cron` is not enabled in this project, fall back to a lightweight in-RPC opportunistic purge (≈1% sampled, same pattern as `consume_rate_limit`).
-- Same treatment for the `rate_limit_buckets` table indexing if needed (already cleaned lazily, just confirm).
+All in `src/components/admin/SecurityEventsTab.tsx`:
 
-## 3. End-to-end 429 tests across multiple public edge functions
+- State: `pages: SecurityEventRow[][]`, `cursor: { created_at: string; id: string } | null`, `hasMore: boolean`, `pageSize = 100`.
+- Replace single `events` query with a `loadPage(reset)` function:
+  - Builds query with the same filters, applies window `gte('created_at', since)`.
+  - When a cursor exists and not `reset`: add `.or('created_at.lt.<ts>,and(created_at.eq.<ts>,id.lt.<id>)')` for stable keyset ordering.
+  - Orders by `created_at desc, id desc`, limits to `pageSize + 1` to detect `hasMore`.
+- Filter/window changes → `reset=true`, clear cursor and pages.
+- "Load older events" button below the table appears when `hasMore`. Disabled while loading.
+- Stat cards, chart, and Top-IPs table remain computed from currently-loaded pages (label them "across loaded events"). CSV export ignores pagination — uses the new server endpoint with the active filters.
 
-New file `supabase/functions/_shared/rateLimit.e2e.test.ts` (uses Deno + `dotenv/load.ts`, run via `supabase--test_edge_functions`):
+## 3. Fix the leaky `securityLog` resource in tests
 
-- Iterates over a list of public endpoints: `ai-chat`, `emergency-alert`, `sms-webhook`, `ussd-handler`, `chw-location-update`.
-- For each: bursts requests above the configured limit using a unique fake IP via `x-forwarded-for` header so tests don't pollute real buckets.
-- Asserts at least one response returns:
-  - `status === 429`
-  - `Retry-After` header present and numeric > 0
-  - `X-RateLimit-Limit` and `X-RateLimit-Remaining` headers present
-  - JSON body contains `retry_after_seconds: number` and `error: string`
-- Each request body uses the minimal valid payload for that endpoint to ensure we hit the limiter, not the validator.
+Root cause: `logSecurityEvent` is fire-and-forget; in tests the unawaited `supabase-js` fetch + Postgres keep-alive trips Deno's resource sanitizer in suites that don't already set `sanitizeOps/Resources: false`. We're papering over it everywhere instead of fixing it once.
 
-## 4. Integration tests for validation → 400 + logged event
+**`supabase/functions/_shared/securityLog.ts`:**
+- Add a module-level `Set<Promise<unknown>>` of in-flight inserts.
+- Track each `.then(...).finally(() => pending.delete(p))` and export `flushSecurityEvents(): Promise<void>` (`Promise.allSettled([...pending])`).
+- In tests, callers can `await flushSecurityEvents()` to drain; production paths still don't await.
+- Detect test mode via `Deno.env.get('DENO_TESTING') === '1'` (set in test runner) and, when set, also wrap the supabase-js client construction with `{ global: { fetch } }` using a fetch that calls `signal.addEventListener('abort', …)` cleanup so connections close deterministically.
 
-New file `supabase/functions/_shared/validation.e2e.test.ts`:
+**Test files updated to await flush in teardown:**
+- `supabase/functions/_shared/rateLimit.test.ts`
+- `supabase/functions/_shared/rateLimit.e2e.test.ts`
+- `supabase/functions/_shared/validation.e2e.test.ts`
 
-- For 3 endpoints with strict Zod schemas (`ai-chat`, `chw-location-update`, `emergency-alert`):
-  - Send a deliberately invalid body (extra field, wrong type, out-of-range lat/lng).
-  - Assert response `status === 400`, JSON body has `error: string`.
-  - Poll `security_events` (via service-role client) for up to 5s to find a row with `event_type='validation_failed'` and `scope` matching the endpoint, then assert `details.error` and `details.issues` are populated.
-- Cleanup: delete the inserted test rows at end of each test (filtered by a unique scope tag we inject through `x-test-tag` if helpful, otherwise by `created_at >= testStart` and matching scope).
+Each test that triggers logging gets a trailing `await flushSecurityEvents()`. Once the leak source is drained we re-enable Deno's default `sanitizeOps: true` / `sanitizeResources: true` on the rate-limit unit tests (the e2e tests keep them disabled because they intentionally hold long-lived sockets across many parallel calls). Verify by running `supabase--test_edge_functions` with no filter — exit code must be 0.
 
-## Technical Details
+## Files
 
-- All new tests follow the existing pattern in `rateLimit.test.ts`: `import "https://deno.land/std@0.224.0/dotenv/load.ts"` and read `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY` (+ `SUPABASE_SERVICE_ROLE_KEY` for verification queries) from env. Always `await response.text()` to avoid Deno resource leaks.
-- CSV export uses client-side blob download; no new edge function needed.
-- Migration uses `CREATE INDEX CONCURRENTLY` only outside transactions — since Lovable migrations run in a transaction, use plain `CREATE INDEX IF NOT EXISTS`.
-- Retention default 90 days, configurable by passing an interval to `purge_security_events`.
+- **New:** `supabase/functions/security-events-export/index.ts`
+- **Edit:** `supabase/config.toml` (add function block), `src/components/admin/SecurityEventsTab.tsx`, `supabase/functions/_shared/securityLog.ts`, `supabase/functions/_shared/rateLimit.test.ts`, `supabase/functions/_shared/rateLimit.e2e.test.ts`, `supabase/functions/_shared/validation.e2e.test.ts`
 
-## Files to change
+## Verification
 
-- Edit `src/components/admin/SecurityEventsTab.tsx` (filters + CSV)
-- New migration: indexes + `purge_security_events` function + optional `pg_cron` schedule
-- New `supabase/functions/_shared/rateLimit.e2e.test.ts`
-- New `supabase/functions/_shared/validation.e2e.test.ts`
+1. `supabase--deploy_edge_functions(["security-events-export"])` then `supabase--curl_edge_functions` as non-admin → 403, as admin with filters → CSV stream.
+2. Manually paginate in the dashboard preview; confirm filters persist and "Load older" stops when `hasMore=false`.
+3. `supabase--test_edge_functions({})` → exit 0, no resource-leak warnings.
 
-No edge-function source changes needed — existing `enforceLimits` and `badRequest` already emit the required headers and security events.
+No DB migrations required — existing `security_events` indexes already cover `(created_at, id)` ordering and filter columns.
