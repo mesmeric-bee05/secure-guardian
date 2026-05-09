@@ -9,12 +9,15 @@ import { flushSecurityEvents } from "../_shared/securityLog.ts";
 
 const CORS = { "Access-Control-Allow-Origin": "*" };
 
+let _svc: ReturnType<typeof createClient> | null = null;
 function svc() {
-  return createClient(
+  if (_svc) return _svc;
+  _svc = createClient(
     Deno.env.get("SUPABASE_URL") ?? Deno.env.get("VITE_SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } },
   );
+  return _svc;
 }
 
 async function waitForEvent(scope: string, sinceIso: string, timeoutMs = 6000) {
