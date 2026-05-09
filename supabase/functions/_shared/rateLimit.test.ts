@@ -7,7 +7,7 @@ import { flushSecurityEvents } from "../_shared/securityLog.ts";
 
 const CORS = { "Access-Control-Allow-Origin": "*" };
 
-Deno.test({ name: "token bucket: first call allowed, then refills", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+Deno.test("token bucket: first call allowed, then refills", async () => {
   const key = `test:bucket:${crypto.randomUUID()}`;
   const r1 = await consume(key, { capacity: 2, refillPerSec: 0.001 });
   assert(r1.allowed, "first call should be allowed");
@@ -16,9 +16,10 @@ Deno.test({ name: "token bucket: first call allowed, then refills", sanitizeOps:
   const r3 = await consume(key, { capacity: 2, refillPerSec: 0.001 });
   assertEquals(r3.allowed, false, "third call should be denied");
   assert(r3.retryAfterSeconds > 0, "retryAfter should be positive");
-} });
+  await flushSecurityEvents();
+});
 
-Deno.test({ name: "enforceLimits: returns null when under quota", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+Deno.test("enforceLimits: returns null when under quota", async () => {
   const ip = `127.0.0.${Math.floor(Math.random() * 254) + 1}`;
   const res = await enforceLimits({
     scope: `test-scope-${crypto.randomUUID()}`,
@@ -27,12 +28,12 @@ Deno.test({ name: "enforceLimits: returns null when under quota", sanitizeOps: f
     corsHeaders: CORS,
   });
   assertEquals(res, null);
-} });
+  await flushSecurityEvents();
+});
 
-Deno.test({ name: "enforceLimits: 429 response has Retry-After + X-RateLimit-* headers", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+Deno.test("enforceLimits: 429 response has Retry-After + X-RateLimit-* headers", async () => {
   const scope = `test-429-${crypto.randomUUID()}`;
   const ip = "10.0.0.1";
-  // Capacity 1 — second call will trip the limiter
   await enforceLimits({ scope, ip, ipLimitPerMin: 1, corsHeaders: CORS });
   const res = await enforceLimits({ scope, ip, ipLimitPerMin: 1, corsHeaders: CORS });
   assert(res !== null, "second call should be blocked");
@@ -47,14 +48,15 @@ Deno.test({ name: "enforceLimits: 429 response has Retry-After + X-RateLimit-* h
   const body = await res!.json();
   assertEquals(typeof body.retry_after_seconds, "number");
   assertEquals(typeof body.error, "string");
-} });
+  await flushSecurityEvents();
+});
 
-Deno.test({ name: "enforceLimits: user bucket independent of IP bucket", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+Deno.test("enforceLimits: user bucket independent of IP bucket", async () => {
   const scope = `test-user-${crypto.randomUUID()}`;
-  // Generous IP, tight user
   const userId = crypto.randomUUID();
   await enforceLimits({ scope, ip: "10.0.0.2", userId, ipLimitPerMin: 100, userLimitPerMin: 1, corsHeaders: CORS });
   const res = await enforceLimits({ scope, ip: "10.0.0.2", userId, ipLimitPerMin: 100, userLimitPerMin: 1, corsHeaders: CORS });
   assert(res !== null, "user-bucket exhaustion should 429");
   assertEquals(res!.status, 429);
-} });
+  await flushSecurityEvents();
+});
