@@ -24,10 +24,6 @@ const ENDPOINTS = [
 for (const ep of ENDPOINTS) {
   Deno.test({
     name: `429 contract: ${ep.scope}`,
-    // fire-and-forget security_event inserts + supabase-js keep-alive intervals
-    // are intentional in production; exclude from test leak detection.
-    sanitizeOps: false,
-    sanitizeResources: false,
     fn: async () => {
       const ip = `10.99.${Math.floor(Math.random() * 254)}.${Math.floor(Math.random() * 254)}`;
       // Fire all calls in parallel to outpace token refills.
