@@ -50,3 +50,6 @@ verify_jwt = false
 
 [functions.notify-case-update]
 verify_jwt = false
+
+[functions.security-events-export]
+verify_jwt = false

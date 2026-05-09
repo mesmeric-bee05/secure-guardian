@@ -5,6 +5,7 @@
 import "https://deno.land/std@0.224.0/dotenv/load.ts";
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { enforceLimits } from "../_shared/rateLimit.ts";
+import { flushSecurityEvents } from "../_shared/securityLog.ts";
 
 const CORS = { "Access-Control-Allow-Origin": "*" };
 
@@ -23,10 +24,6 @@ const ENDPOINTS = [
 for (const ep of ENDPOINTS) {
   Deno.test({
     name: `429 contract: ${ep.scope}`,
-    // fire-and-forget security_event inserts + supabase-js keep-alive intervals
-    // are intentional in production; exclude from test leak detection.
-    sanitizeOps: false,
-    sanitizeResources: false,
     fn: async () => {
       const ip = `10.99.${Math.floor(Math.random() * 254)}.${Math.floor(Math.random() * 254)}`;
       // Fire all calls in parallel to outpace token refills.
@@ -58,6 +55,7 @@ for (const ep of ENDPOINTS) {
       assertEquals(typeof body.retry_after_seconds, "number");
       assertEquals(typeof body.error, "string");
       assert(body.error.length > 0, "error message should be non-empty");
+      await flushSecurityEvents();
     },
   });
 }

@@ -5,15 +5,19 @@ import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.t
 import { z } from "https://esm.sh/zod@3.23.8";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 import { parseBody, badRequest } from "../_shared/validation.ts";
+import { flushSecurityEvents } from "../_shared/securityLog.ts";
 
 const CORS = { "Access-Control-Allow-Origin": "*" };
 
+let _svc: ReturnType<typeof createClient> | null = null;
 function svc() {
-  return createClient(
+  if (_svc) return _svc;
+  _svc = createClient(
     Deno.env.get("SUPABASE_URL") ?? Deno.env.get("VITE_SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-    { auth: { persistSession: false } },
+    { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } },
   );
+  return _svc;
 }
 
 async function waitForEvent(scope: string, sinceIso: string, timeoutMs = 6000) {
@@ -66,7 +70,8 @@ const CASES = [
 ];
 
 for (const c of CASES) {
-  Deno.test({ name: c.name, sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  Deno.test({ name: c.name, fn: async () => {
+    await flushSecurityEvents();
     const since = new Date(Date.now() - 1000).toISOString();
     const req = new Request("https://test.local/", {
       method: "POST",
@@ -97,6 +102,8 @@ for (const c of CASES) {
     assert("error" in ev.details, "details.error required");
     assert(Array.isArray(ev.details.issues), "details.issues required");
 
+    // Drain log inserts before cleanup
+    await flushSecurityEvents();
     // Cleanup
     await svc().from("security_events").delete().eq("scope", c.scope);
   } });
