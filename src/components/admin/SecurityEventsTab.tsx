@@ -1,17 +1,18 @@
 // Security Events Dashboard - tracks 429s, validation failures, suspicious patterns
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, ShieldAlert, AlertTriangle, RefreshCw, Activity, Download, X } from 'lucide-react';
+import { Loader2, ShieldAlert, AlertTriangle, RefreshCw, Activity, Download, X, ChevronDown } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { toast } from 'sonner';
 
 type Window = '1h' | '24h' | '7d';
 const WINDOW_MS: Record<Window, number> = { '1h': 3.6e6, '24h': 8.64e7, '7d': 6.048e8 };
+const PAGE_SIZE = 100;
 
 const EVENT_TYPES = ['rate_limit_429', 'validation_failed', 'suspicious', 'auth_failed'] as const;
 const SEVERITIES = ['info', 'warn', 'critical'] as const;
@@ -40,44 +41,77 @@ const EMPTY_FILTERS: Filters = { eventType: 'all', severity: 'all', scope: '', i
 export default function SecurityEventsTab() {
   const [windowSel, setWindowSel] = useState<Window>('24h');
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [events, setEvents] = useState<SecurityEventRow[]>([]);
+  const [hasMore, setHasMore] = useState(false);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  const reqRef = useRef(0);
 
   const since = useMemo(
     () => new Date(Date.now() - WINDOW_MS[windowSel]).toISOString(),
     [windowSel],
   );
 
-  const load = async () => {
+  const buildQuery = (cursor: { ts: string; id: string } | null) => {
+    let q = supabase
+      .from('security_events')
+      .select('*')
+      .gte('created_at', since);
+
+    if (filters.eventType !== 'all') q = q.eq('event_type', filters.eventType);
+    if (filters.severity !== 'all') q = q.eq('severity', filters.severity);
+    if (filters.scope.trim()) q = q.ilike('scope', `%${filters.scope.trim()}%`);
+    if (filters.ip.trim()) q = q.ilike('ip_address', `%${filters.ip.trim()}%`);
+    if (filters.userId.trim()) q = q.eq('user_id', filters.userId.trim());
+
+    if (cursor) {
+      q = q.or(`created_at.lt.${cursor.ts},and(created_at.eq.${cursor.ts},id.lt.${cursor.id})`);
+    }
+    return q
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .limit(PAGE_SIZE + 1);
+  };
+
+  const loadFirstPage = async () => {
+    const reqId = ++reqRef.current;
     setLoading(true);
     try {
-      let q = supabase
-        .from('security_events')
-        .select('*')
-        .gte('created_at', since)
-        .order('created_at', { ascending: false })
-        .limit(1000);
-
-      if (filters.eventType !== 'all') q = q.eq('event_type', filters.eventType);
-      if (filters.severity !== 'all') q = q.eq('severity', filters.severity);
-      if (filters.scope.trim()) q = q.ilike('scope', `%${filters.scope.trim()}%`);
-      if (filters.ip.trim()) q = q.ilike('ip_address', `%${filters.ip.trim()}%`);
-      if (filters.userId.trim()) q = q.eq('user_id', filters.userId.trim());
-
-      const { data, error } = await q;
+      const { data, error } = await buildQuery(null);
+      if (reqId !== reqRef.current) return;
       if (error) {
         toast.error(`Failed to load events: ${error.message}`);
+        setEvents([]);
+        setHasMore(false);
       } else {
-        setEvents((data ?? []) as SecurityEventRow[]);
+        const rows = (data ?? []) as SecurityEventRow[];
+        setHasMore(rows.length > PAGE_SIZE);
+        setEvents(rows.slice(0, PAGE_SIZE));
       }
     } finally {
-      setLoading(false);
+      if (reqId === reqRef.current) setLoading(false);
     }
   };
 
-  // Debounce reload on filter/window change
+  const loadMore = async () => {
+    if (!events.length || loadingMore) return;
+    const last = events[events.length - 1];
+    setLoadingMore(true);
+    try {
+      const { data, error } = await buildQuery({ ts: last.created_at, id: last.id });
+      if (error) { toast.error(`Failed to load more: ${error.message}`); return; }
+      const rows = (data ?? []) as SecurityEventRow[];
+      setHasMore(rows.length > PAGE_SIZE);
+      setEvents((prev) => [...prev, ...rows.slice(0, PAGE_SIZE)]);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  // Reload first page whenever filters or window change (debounced)
   useEffect(() => {
-    const t = setTimeout(load, 250);
+    const t = setTimeout(loadFirstPage, 250);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [since, filters.eventType, filters.severity, filters.scope, filters.ip, filters.userId]);
@@ -120,28 +154,52 @@ export default function SecurityEventsTab() {
     return Array.from(map.values()).sort((a, b) => b.total - a.total).slice(0, 15);
   }, [events]);
 
-  const exportCsv = () => {
-    if (events.length === 0) { toast.error('No events to export'); return; }
-    const headers = ['created_at', 'event_type', 'scope', 'severity', 'ip_address', 'user_id', 'details'];
-    const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
-    const rows = events.map((e) => [
-      e.created_at,
-      e.event_type,
-      e.scope ?? '',
-      e.severity,
-      e.ip_address ?? '',
-      e.user_id ?? '',
-      e.details ? JSON.stringify(e.details) : '',
-    ].map((v) => escape(String(v))).join(','));
-    const csv = [headers.join(','), ...rows].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `security-events-${new Date().toISOString().split('T')[0]}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
-    toast.success(`Exported ${events.length} events`);
+  const exportCsv = async () => {
+    setExporting(true);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) { toast.error('You must be signed in to export.'); return; }
+
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/security-events-export`;
+      const body = {
+        since,
+        ...(filters.eventType !== 'all' ? { eventType: filters.eventType } : {}),
+        ...(filters.severity !== 'all' ? { severity: filters.severity } : {}),
+        ...(filters.scope.trim() ? { scopeContains: filters.scope.trim() } : {}),
+        ...(filters.ip.trim() ? { ipContains: filters.ip.trim() } : {}),
+        ...(filters.userId.trim() ? { userId: filters.userId.trim() } : {}),
+      };
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        const msg = await res.text().catch(() => '');
+        toast.error(`Export failed (${res.status}): ${msg.slice(0, 200) || res.statusText}`);
+        return;
+      }
+      const blob = await res.blob();
+      const dlUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const stamp = new Date().toISOString().split('T')[0];
+      link.href = dlUrl;
+      link.download = `security-events-${stamp}.csv`;
+      link.click();
+      URL.revokeObjectURL(dlUrl);
+      toast.success('Export downloaded');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Export failed');
+    } finally {
+      setExporting(false);
+    }
   };
 
   const hasActiveFilters =
@@ -164,10 +222,11 @@ export default function SecurityEventsTab() {
               {w}
             </Button>
           ))}
-          <Button size="sm" variant="outline" onClick={exportCsv} disabled={loading || events.length === 0}>
-            <Download className="h-4 w-4 mr-1" /> CSV
+          <Button size="sm" variant="outline" onClick={exportCsv} disabled={exporting}>
+            {exporting ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Download className="h-4 w-4 mr-1" />}
+            CSV
           </Button>
-          <Button size="sm" variant="ghost" onClick={load} disabled={loading}>
+          <Button size="sm" variant="ghost" onClick={loadFirstPage} disabled={loading}>
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           </Button>
         </div>
@@ -218,14 +277,14 @@ export default function SecurityEventsTab() {
       </Card>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="Total events" value={totals.total} />
+        <StatCard label="Loaded events" value={totals.total} />
         <StatCard label="429 (rate-limited)" value={totals.rate429} accent="warn" />
         <StatCard label="Validation failures" value={totals.validation} accent="warn" />
         <StatCard label="Suspicious" value={totals.suspicious} accent="danger" />
       </div>
 
       <Card className="p-4">
-        <h3 className="font-semibold mb-3 flex items-center gap-2"><Activity className="h-4 w-4" /> Events by endpoint</h3>
+        <h3 className="font-semibold mb-3 flex items-center gap-2"><Activity className="h-4 w-4" /> Events by endpoint <span className="text-xs font-normal text-muted-foreground">(loaded)</span></h3>
         {chartData.length === 0 ? (
           <p className="text-sm text-muted-foreground py-8 text-center">No events in this window.</p>
         ) : (
@@ -246,7 +305,7 @@ export default function SecurityEventsTab() {
       </Card>
 
       <Card className="p-4">
-        <h3 className="font-semibold mb-3 flex items-center gap-2"><AlertTriangle className="h-4 w-4" /> Top IPs (filtered)</h3>
+        <h3 className="font-semibold mb-3 flex items-center gap-2"><AlertTriangle className="h-4 w-4" /> Top IPs <span className="text-xs font-normal text-muted-foreground">(loaded)</span></h3>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -275,50 +334,59 @@ export default function SecurityEventsTab() {
       </Card>
 
       <Card className="p-4">
-        <h3 className="font-semibold mb-3">Events ({events.length})</h3>
+        <h3 className="font-semibold mb-3">Events ({events.length}{hasMore ? '+' : ''})</h3>
         {loading ? (
           <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>
         ) : (
-          <div className="overflow-x-auto max-h-[480px] overflow-y-auto">
-            <table className="w-full text-xs">
-              <thead className="sticky top-0 bg-card">
-                <tr className="border-b border-border text-left text-muted-foreground">
-                  <th className="py-2 pr-3">Time</th>
-                  <th className="py-2 pr-3">Type</th>
-                  <th className="py-2 pr-3">Scope</th>
-                  <th className="py-2 pr-3">IP</th>
-                  <th className="py-2 pr-3">Severity</th>
-                  <th className="py-2 pr-3">Details</th>
-                </tr>
-              </thead>
-              <tbody>
-                {events.length === 0 && (
-                  <tr><td colSpan={6} className="py-4 text-center text-muted-foreground">No events.</td></tr>
-                )}
-                {events.slice(0, 200).map((ev) => (
-                  <tr key={ev.id} className="border-b border-border/40">
-                    <td className="py-2 pr-3 whitespace-nowrap">{new Date(ev.created_at).toLocaleString()}</td>
-                    <td className="py-2 pr-3">
-                      <Badge variant={ev.event_type === 'rate_limit_429' ? 'default' : 'destructive'}>
-                        {ev.event_type}
-                      </Badge>
-                    </td>
-                    <td className="py-2 pr-3">{ev.scope || '—'}</td>
-                    <td className="py-2 pr-3 font-mono">{ev.ip_address || '—'}</td>
-                    <td className="py-2 pr-3">{ev.severity}</td>
-                    <td className="py-2 pr-3 max-w-[280px] truncate font-mono text-muted-foreground">
-                      {ev.details ? JSON.stringify(ev.details) : '—'}
-                    </td>
+          <>
+            <div className="overflow-x-auto max-h-[480px] overflow-y-auto">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-card">
+                  <tr className="border-b border-border text-left text-muted-foreground">
+                    <th className="py-2 pr-3">Time</th>
+                    <th className="py-2 pr-3">Type</th>
+                    <th className="py-2 pr-3">Scope</th>
+                    <th className="py-2 pr-3">IP</th>
+                    <th className="py-2 pr-3">Severity</th>
+                    <th className="py-2 pr-3">Details</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            {events.length > 200 && (
-              <p className="text-xs text-muted-foreground text-center mt-2">
-                Showing 200 of {events.length}. Use CSV export for the full set.
-              </p>
-            )}
-          </div>
+                </thead>
+                <tbody>
+                  {events.length === 0 && (
+                    <tr><td colSpan={6} className="py-4 text-center text-muted-foreground">No events.</td></tr>
+                  )}
+                  {events.map((ev) => (
+                    <tr key={ev.id} className="border-b border-border/40">
+                      <td className="py-2 pr-3 whitespace-nowrap">{new Date(ev.created_at).toLocaleString()}</td>
+                      <td className="py-2 pr-3">
+                        <Badge variant={ev.event_type === 'rate_limit_429' ? 'default' : 'destructive'}>
+                          {ev.event_type}
+                        </Badge>
+                      </td>
+                      <td className="py-2 pr-3">{ev.scope || '—'}</td>
+                      <td className="py-2 pr-3 font-mono">{ev.ip_address || '—'}</td>
+                      <td className="py-2 pr-3">{ev.severity}</td>
+                      <td className="py-2 pr-3 max-w-[280px] truncate font-mono text-muted-foreground">
+                        {ev.details ? JSON.stringify(ev.details) : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-3 flex justify-center">
+              {hasMore ? (
+                <Button size="sm" variant="outline" onClick={loadMore} disabled={loadingMore}>
+                  {loadingMore ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <ChevronDown className="h-4 w-4 mr-1" />}
+                  Load older events
+                </Button>
+              ) : (
+                events.length > 0 && (
+                  <p className="text-xs text-muted-foreground">End of events for this window.</p>
+                )
+              )}
+            </div>
+          </>
         )}
       </Card>
     </div>
