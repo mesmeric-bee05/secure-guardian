@@ -3,6 +3,7 @@
 import "https://deno.land/std@0.224.0/dotenv/load.ts";
 import { assertEquals, assert } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { enforceLimits, consume } from "../_shared/rateLimit.ts";
+import { flushSecurityEvents } from "../_shared/securityLog.ts";
 
 const CORS = { "Access-Control-Allow-Origin": "*" };
 
