@@ -1,4 +1,5 @@
 // Fire-and-forget logger for security events. Uses service role.
+// In tests, awaits via flushSecurityEvents() so resource sanitizers stay green.
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
 let cached: SupabaseClient | null = null;
@@ -27,10 +28,11 @@ export interface SecurityEvent {
   severity?: "info" | "warn" | "critical";
 }
 
+const pending = new Set<Promise<unknown>>();
+
 export function logSecurityEvent(ev: SecurityEvent): void {
-  // Don't await — fire and forget so request latency isn't impacted.
   try {
-    client()
+    const p = client()
       .from("security_events")
       .insert({
         event_type: ev.event_type,
@@ -42,8 +44,19 @@ export function logSecurityEvent(ev: SecurityEvent): void {
       })
       .then(({ error }) => {
         if (error) console.error("security_event insert error:", error.message);
+      })
+      .catch((e) => {
+        console.error("security_event threw:", e instanceof Error ? e.message : "unknown");
       });
+    pending.add(p);
+    p.finally(() => pending.delete(p));
   } catch (e) {
-    console.error("security_event threw:", e instanceof Error ? e.message : "unknown");
+    console.error("security_event sync threw:", e instanceof Error ? e.message : "unknown");
   }
+}
+
+/** Drain in-flight log inserts. Call from tests to keep Deno's sanitizers happy. */
+export async function flushSecurityEvents(): Promise<void> {
+  if (pending.size === 0) return;
+  await Promise.allSettled([...pending]);
 }
