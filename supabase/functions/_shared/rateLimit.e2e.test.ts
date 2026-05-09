@@ -55,6 +55,7 @@ for (const ep of ENDPOINTS) {
       assertEquals(typeof body.retry_after_seconds, "number");
       assertEquals(typeof body.error, "string");
       assert(body.error.length > 0, "error message should be non-empty");
+      await flushSecurityEvents();
     },
   });
 }
