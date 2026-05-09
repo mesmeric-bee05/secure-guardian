@@ -32,7 +32,7 @@ const pending = new Set<Promise<unknown>>();
 
 export function logSecurityEvent(ev: SecurityEvent): void {
   try {
-    const p = client()
+    const insert = client()
       .from("security_events")
       .insert({
         event_type: ev.event_type,
@@ -41,13 +41,15 @@ export function logSecurityEvent(ev: SecurityEvent): void {
         user_id: ev.user_id ?? null,
         details: ev.details ?? {},
         severity: ev.severity ?? "info",
-      })
-      .then(({ error }) => {
-        if (error) console.error("security_event insert error:", error.message);
-      })
-      .catch((e) => {
-        console.error("security_event threw:", e instanceof Error ? e.message : "unknown");
       });
+    const p: Promise<void> = (async () => {
+      try {
+        const { error } = await insert;
+        if (error) console.error("security_event insert error:", error.message);
+      } catch (e) {
+        console.error("security_event threw:", e instanceof Error ? e.message : "unknown");
+      }
+    })();
     pending.add(p);
     p.finally(() => pending.delete(p));
   } catch (e) {
