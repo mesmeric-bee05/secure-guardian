@@ -346,6 +346,10 @@ export default function SecurityEventsTab() {
                 <div className="font-semibold">{retention.total_rows.toLocaleString()}</div>
               </div>
             </div>
+            <Button size="sm" variant="outline" onClick={runPurgeNow} disabled={purging}>
+              {purging ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Database className="h-4 w-4 mr-1" />}
+              Run purge now
+            </Button>
           </div>
         </Card>
       )}
