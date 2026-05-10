@@ -6,9 +6,10 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, ShieldAlert, AlertTriangle, RefreshCw, Activity, Download, X, ChevronDown } from 'lucide-react';
+import { Loader2, ShieldAlert, AlertTriangle, RefreshCw, Activity, Download, X, ChevronDown, Database, Clock } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { toast } from 'sonner';
+import { streamCsvDownload, triggerBlobDownload, formatBytes, type StreamProgress } from '@/lib/streamingDownload';
 
 type Window = '1h' | '24h' | '7d';
 const WINDOW_MS: Record<Window, number> = { '1h': 3.6e6, '24h': 8.64e7, '7d': 6.048e8 };
@@ -38,14 +39,25 @@ interface Filters {
 
 const EMPTY_FILTERS: Filters = { eventType: 'all', severity: 'all', scope: '', ip: '', userId: '' };
 
+interface RetentionStatus {
+  retention_days: number;
+  last_run_at: string | null;
+  last_deleted: number;
+  oldest_event_at: string | null;
+  total_rows: number;
+}
+
 export default function SecurityEventsTab() {
   const [windowSel, setWindowSel] = useState<Window>('24h');
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState<StreamProgress | null>(null);
+  const exportAbortRef = useRef<AbortController | null>(null);
   const [events, setEvents] = useState<SecurityEventRow[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  const [retention, setRetention] = useState<RetentionStatus | null>(null);
   const reqRef = useRef(0);
 
   const since = useMemo(
@@ -116,6 +128,13 @@ export default function SecurityEventsTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [since, filters.eventType, filters.severity, filters.scope, filters.ip, filters.userId]);
 
+  // Load retention status once on mount + on manual refresh
+  const loadRetention = async () => {
+    const { data, error } = await supabase.rpc('security_events_retention_status');
+    if (!error && data) setRetention(data as unknown as RetentionStatus);
+  };
+  useEffect(() => { loadRetention(); }, []);
+
   const totals = useMemo(() => {
     const acc = { total: events.length, rate429: 0, validation: 0, suspicious: 0 };
     for (const e of events) {
@@ -154,8 +173,15 @@ export default function SecurityEventsTab() {
     return Array.from(map.values()).sort((a, b) => b.total - a.total).slice(0, 15);
   }, [events]);
 
+  const cancelExport = () => {
+    exportAbortRef.current?.abort();
+  };
+
   const exportCsv = async () => {
     setExporting(true);
+    setExportProgress({ bytes: 0, rows: 0 });
+    const ctrl = new AbortController();
+    exportAbortRef.current = ctrl;
     try {
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData.session?.access_token;
@@ -171,34 +197,31 @@ export default function SecurityEventsTab() {
         ...(filters.userId.trim() ? { userId: filters.userId.trim() } : {}),
       };
 
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
+      const result = await streamCsvDownload({
+        url,
+        token,
+        apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string,
+        body,
+        signal: ctrl.signal,
+        onProgress: (p) => setExportProgress(p),
       });
-
-      if (!res.ok) {
-        const msg = await res.text().catch(() => '');
-        toast.error(`Export failed (${res.status}): ${msg.slice(0, 200) || res.statusText}`);
-        return;
-      }
-      const blob = await res.blob();
-      const dlUrl = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      const stamp = new Date().toISOString().split('T')[0];
-      link.href = dlUrl;
-      link.download = `security-events-${stamp}.csv`;
-      link.click();
-      URL.revokeObjectURL(dlUrl);
-      toast.success('Export downloaded');
+      triggerBlobDownload(result.blob, result.filename);
+      toast.success(`Export downloaded — ${result.rows.toLocaleString()} rows (${formatBytes(result.bytes)})`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Export failed');
+      const err = e as Error & { status?: number; retryAfter?: string | null };
+      if (err.name === 'AbortError') {
+        toast.message('Export cancelled.');
+      } else if (err.status === 429) {
+        toast.error(`Rate limited. Retry after ${err.retryAfter ?? '?'}s — ${err.message}`);
+      } else if (err.status === 403) {
+        toast.error('Forbidden — admin access required.');
+      } else {
+        toast.error(err.message || 'Export failed');
+      }
     } finally {
       setExporting(false);
+      setExportProgress(null);
+      exportAbortRef.current = null;
     }
   };
 
@@ -222,15 +245,64 @@ export default function SecurityEventsTab() {
               {w}
             </Button>
           ))}
-          <Button size="sm" variant="outline" onClick={exportCsv} disabled={exporting}>
-            {exporting ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Download className="h-4 w-4 mr-1" />}
-            CSV
-          </Button>
-          <Button size="sm" variant="ghost" onClick={loadFirstPage} disabled={loading}>
+          {exporting ? (
+            <div
+              className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-border bg-muted/40 text-xs"
+              role="status"
+              aria-live="polite"
+            >
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              <span className="font-mono">
+                {(exportProgress?.rows ?? 0).toLocaleString()} rows · {formatBytes(exportProgress?.bytes ?? 0)}
+              </span>
+              <Button size="sm" variant="ghost" className="h-6 px-2" onClick={cancelExport}>
+                <X className="h-3 w-3 mr-1" /> Cancel
+              </Button>
+            </div>
+          ) : (
+            <Button size="sm" variant="outline" onClick={exportCsv}>
+              <Download className="h-4 w-4 mr-1" /> CSV
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" onClick={() => { loadFirstPage(); loadRetention(); }} disabled={loading}>
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           </Button>
         </div>
       </div>
+
+      {retention && (
+        <Card className="p-4">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-2">
+              <Database className="h-4 w-4 text-primary" />
+              <h3 className="font-semibold text-sm">Retention</h3>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs flex-1 md:flex-initial">
+              <div>
+                <div className="text-muted-foreground">Window</div>
+                <div className="font-semibold">{Math.round(retention.retention_days)} days</div>
+              </div>
+              <div>
+                <div className="text-muted-foreground flex items-center gap-1"><Clock className="h-3 w-3" /> Last purge</div>
+                <div className="font-semibold">
+                  {retention.last_run_at ? new Date(retention.last_run_at).toLocaleString() : 'never'}
+                  {retention.last_run_at && (
+                    <span className="ml-1 text-muted-foreground">({retention.last_deleted.toLocaleString()} deleted)</span>
+                  )}
+                </div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">Oldest event</div>
+                <div className="font-semibold">{retention.oldest_event_at ? new Date(retention.oldest_event_at).toLocaleDateString() : '—'}</div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">Total stored</div>
+                <div className="font-semibold">{retention.total_rows.toLocaleString()}</div>
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
 
       <Card className="p-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">

@@ -469,6 +469,27 @@ export type Database = {
         }
         Relationships: []
       }
+      security_events_purge_log: {
+        Row: {
+          deleted_count: number
+          id: string
+          ran_at: string
+          retention: string
+        }
+        Insert: {
+          deleted_count?: number
+          id?: string
+          ran_at?: string
+          retention: string
+        }
+        Update: {
+          deleted_count?: number
+          id?: string
+          ran_at?: string
+          retention?: string
+        }
+        Relationships: []
+      }
       sms_logs: {
         Row: {
           created_at: string | null
@@ -618,6 +639,11 @@ export type Database = {
       is_admin: { Args: { _user_id: string }; Returns: boolean }
       is_chw: { Args: { _user_id: string }; Returns: boolean }
       purge_security_events: { Args: { _older_than?: string }; Returns: number }
+      run_security_events_purge: {
+        Args: { _older_than?: string }
+        Returns: number
+      }
+      security_events_retention_status: { Args: never; Returns: Json }
       security_events_summary: {
         Args: { _since: string }
         Returns: {
