@@ -128,6 +128,13 @@ export default function SecurityEventsTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [since, filters.eventType, filters.severity, filters.scope, filters.ip, filters.userId]);
 
+  // Load retention status once on mount + on manual refresh
+  const loadRetention = async () => {
+    const { data, error } = await supabase.rpc('security_events_retention_status');
+    if (!error && data) setRetention(data as unknown as RetentionStatus);
+  };
+  useEffect(() => { loadRetention(); }, []);
+
   const totals = useMemo(() => {
     const acc = { total: events.length, rate429: 0, validation: 0, suspicious: 0 };
     for (const e of events) {
