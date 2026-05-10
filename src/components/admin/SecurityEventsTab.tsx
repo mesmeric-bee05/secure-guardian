@@ -6,9 +6,10 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, ShieldAlert, AlertTriangle, RefreshCw, Activity, Download, X, ChevronDown } from 'lucide-react';
+import { Loader2, ShieldAlert, AlertTriangle, RefreshCw, Activity, Download, X, ChevronDown, Database, Clock } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { toast } from 'sonner';
+import { streamCsvDownload, triggerBlobDownload, formatBytes, type StreamProgress } from '@/lib/streamingDownload';
 
 type Window = '1h' | '24h' | '7d';
 const WINDOW_MS: Record<Window, number> = { '1h': 3.6e6, '24h': 8.64e7, '7d': 6.048e8 };
