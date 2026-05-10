@@ -173,8 +173,20 @@ export default function SecurityEventsTab() {
     return Array.from(map.values()).sort((a, b) => b.total - a.total).slice(0, 15);
   }, [events]);
 
+  const auditLog = (action: string, details: Record<string, unknown> = {}) => {
+    // Fire-and-forget; admin-only RPC will reject non-admins.
+    supabase.rpc('log_admin_action', {
+      _action: action,
+      _resource_type: 'security_events',
+      _details: details as never,
+    }).then(({ error }) => {
+      if (error) console.warn('audit log failed:', error.message);
+    });
+  };
+
   const cancelExport = () => {
     exportAbortRef.current?.abort();
+    auditLog('security_events_export_cancelled', { since, filters });
   };
 
   const exportCsv = async () => {
@@ -182,6 +194,7 @@ export default function SecurityEventsTab() {
     setExportProgress({ bytes: 0, rows: 0 });
     const ctrl = new AbortController();
     exportAbortRef.current = ctrl;
+    auditLog('security_events_export_started', { since, filters });
     try {
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData.session?.access_token;
@@ -206,22 +219,49 @@ export default function SecurityEventsTab() {
         onProgress: (p) => setExportProgress(p),
       });
       triggerBlobDownload(result.blob, result.filename);
-      toast.success(`Export downloaded — ${result.rows.toLocaleString()} rows (${formatBytes(result.bytes)})`);
+      toast.success(
+        `Export downloaded — ${result.rows.toLocaleString()} rows (${formatBytes(result.bytes)})${result.retries ? ` after ${result.retries} retr${result.retries === 1 ? 'y' : 'ies'}` : ''}`,
+      );
+      auditLog('security_events_export_succeeded', {
+        rows: result.rows, bytes: result.bytes, retries: result.retries, filename: result.filename,
+      });
     } catch (e) {
       const err = e as Error & { status?: number; retryAfter?: string | null };
       if (err.name === 'AbortError') {
         toast.message('Export cancelled.');
       } else if (err.status === 429) {
         toast.error(`Rate limited. Retry after ${err.retryAfter ?? '?'}s — ${err.message}`);
+        auditLog('security_events_export_failed', { status: 429, message: err.message });
       } else if (err.status === 403) {
         toast.error('Forbidden — admin access required.');
+        auditLog('security_events_export_failed', { status: 403 });
       } else {
         toast.error(err.message || 'Export failed');
+        auditLog('security_events_export_failed', { status: err.status, message: err.message });
       }
     } finally {
       setExporting(false);
       setExportProgress(null);
       exportAbortRef.current = null;
+    }
+  };
+
+  const [purging, setPurging] = useState(false);
+  const runPurgeNow = async () => {
+    setPurging(true);
+    try {
+      const { data, error } = await supabase.rpc('admin_run_security_events_purge', {
+        _older_than: '90 days',
+      } as never);
+      if (error) throw error;
+      const result = data as { deleted_count: number; ran_at: string };
+      toast.success(`Purge complete — ${result.deleted_count.toLocaleString()} rows removed`);
+      await loadRetention();
+      await loadFirstPage();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Purge failed');
+    } finally {
+      setPurging(false);
     }
   };
 
