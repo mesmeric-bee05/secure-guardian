@@ -39,14 +39,25 @@ interface Filters {
 
 const EMPTY_FILTERS: Filters = { eventType: 'all', severity: 'all', scope: '', ip: '', userId: '' };
 
+interface RetentionStatus {
+  retention_days: number;
+  last_run_at: string | null;
+  last_deleted: number;
+  oldest_event_at: string | null;
+  total_rows: number;
+}
+
 export default function SecurityEventsTab() {
   const [windowSel, setWindowSel] = useState<Window>('24h');
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState<StreamProgress | null>(null);
+  const exportAbortRef = useRef<AbortController | null>(null);
   const [events, setEvents] = useState<SecurityEventRow[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  const [retention, setRetention] = useState<RetentionStatus | null>(null);
   const reqRef = useRef(0);
 
   const since = useMemo(
