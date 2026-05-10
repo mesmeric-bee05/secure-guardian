@@ -173,8 +173,15 @@ export default function SecurityEventsTab() {
     return Array.from(map.values()).sort((a, b) => b.total - a.total).slice(0, 15);
   }, [events]);
 
+  const cancelExport = () => {
+    exportAbortRef.current?.abort();
+  };
+
   const exportCsv = async () => {
     setExporting(true);
+    setExportProgress({ bytes: 0, rows: 0 });
+    const ctrl = new AbortController();
+    exportAbortRef.current = ctrl;
     try {
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData.session?.access_token;
@@ -190,34 +197,31 @@ export default function SecurityEventsTab() {
         ...(filters.userId.trim() ? { userId: filters.userId.trim() } : {}),
       };
 
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
+      const result = await streamCsvDownload({
+        url,
+        token,
+        apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string,
+        body,
+        signal: ctrl.signal,
+        onProgress: (p) => setExportProgress(p),
       });
-
-      if (!res.ok) {
-        const msg = await res.text().catch(() => '');
-        toast.error(`Export failed (${res.status}): ${msg.slice(0, 200) || res.statusText}`);
-        return;
-      }
-      const blob = await res.blob();
-      const dlUrl = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      const stamp = new Date().toISOString().split('T')[0];
-      link.href = dlUrl;
-      link.download = `security-events-${stamp}.csv`;
-      link.click();
-      URL.revokeObjectURL(dlUrl);
-      toast.success('Export downloaded');
+      triggerBlobDownload(result.blob, result.filename);
+      toast.success(`Export downloaded — ${result.rows.toLocaleString()} rows (${formatBytes(result.bytes)})`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Export failed');
+      const err = e as Error & { status?: number; retryAfter?: string | null };
+      if (err.name === 'AbortError') {
+        toast.message('Export cancelled.');
+      } else if (err.status === 429) {
+        toast.error(`Rate limited. Retry after ${err.retryAfter ?? '?'}s — ${err.message}`);
+      } else if (err.status === 403) {
+        toast.error('Forbidden — admin access required.');
+      } else {
+        toast.error(err.message || 'Export failed');
+      }
     } finally {
       setExporting(false);
+      setExportProgress(null);
+      exportAbortRef.current = null;
     }
   };
 
