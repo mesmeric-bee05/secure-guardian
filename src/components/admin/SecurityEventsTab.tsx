@@ -245,15 +245,64 @@ export default function SecurityEventsTab() {
               {w}
             </Button>
           ))}
-          <Button size="sm" variant="outline" onClick={exportCsv} disabled={exporting}>
-            {exporting ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Download className="h-4 w-4 mr-1" />}
-            CSV
-          </Button>
-          <Button size="sm" variant="ghost" onClick={loadFirstPage} disabled={loading}>
+          {exporting ? (
+            <div
+              className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-border bg-muted/40 text-xs"
+              role="status"
+              aria-live="polite"
+            >
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              <span className="font-mono">
+                {(exportProgress?.rows ?? 0).toLocaleString()} rows · {formatBytes(exportProgress?.bytes ?? 0)}
+              </span>
+              <Button size="sm" variant="ghost" className="h-6 px-2" onClick={cancelExport}>
+                <X className="h-3 w-3 mr-1" /> Cancel
+              </Button>
+            </div>
+          ) : (
+            <Button size="sm" variant="outline" onClick={exportCsv}>
+              <Download className="h-4 w-4 mr-1" /> CSV
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" onClick={() => { loadFirstPage(); loadRetention(); }} disabled={loading}>
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           </Button>
         </div>
       </div>
+
+      {retention && (
+        <Card className="p-4">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-2">
+              <Database className="h-4 w-4 text-primary" />
+              <h3 className="font-semibold text-sm">Retention</h3>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs flex-1 md:flex-initial">
+              <div>
+                <div className="text-muted-foreground">Window</div>
+                <div className="font-semibold">{Math.round(retention.retention_days)} days</div>
+              </div>
+              <div>
+                <div className="text-muted-foreground flex items-center gap-1"><Clock className="h-3 w-3" /> Last purge</div>
+                <div className="font-semibold">
+                  {retention.last_run_at ? new Date(retention.last_run_at).toLocaleString() : 'never'}
+                  {retention.last_run_at && (
+                    <span className="ml-1 text-muted-foreground">({retention.last_deleted.toLocaleString()} deleted)</span>
+                  )}
+                </div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">Oldest event</div>
+                <div className="font-semibold">{retention.oldest_event_at ? new Date(retention.oldest_event_at).toLocaleDateString() : '—'}</div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">Total stored</div>
+                <div className="font-semibold">{retention.total_rows.toLocaleString()}</div>
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
 
       <Card className="p-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
