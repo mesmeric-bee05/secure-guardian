@@ -292,9 +292,15 @@ export default function SecurityEventsTab() {
               aria-live="polite"
             >
               <Loader2 className="h-4 w-4 animate-spin text-primary" />
-              <span className="font-mono">
-                {(exportProgress?.rows ?? 0).toLocaleString()} rows · {formatBytes(exportProgress?.bytes ?? 0)}
-              </span>
+              {exportProgress?.retrying ? (
+                <span className="font-mono text-orange-500">
+                  Rate limited — retry {exportProgress.retrying.attempt}/{exportProgress.retrying.maxAttempts} in {exportProgress.retrying.secondsLeft}s
+                </span>
+              ) : (
+                <span className="font-mono">
+                  {(exportProgress?.rows ?? 0).toLocaleString()} rows · {formatBytes(exportProgress?.bytes ?? 0)}
+                </span>
+              )}
               <Button size="sm" variant="ghost" className="h-6 px-2" onClick={cancelExport}>
                 <X className="h-3 w-3 mr-1" /> Cancel
               </Button>
