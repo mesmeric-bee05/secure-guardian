@@ -603,6 +603,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      admin_run_security_events_purge: {
+        Args: { _older_than?: string }
+        Returns: Json
+      }
       calculate_distance_km: {
         Args: { lat1: number; lat2: number; lng1: number; lng2: number }
         Returns: number
@@ -638,6 +642,16 @@ export type Database = {
       }
       is_admin: { Args: { _user_id: string }; Returns: boolean }
       is_chw: { Args: { _user_id: string }; Returns: boolean }
+      log_admin_action: {
+        Args: {
+          _action: string
+          _details?: Json
+          _ip_address?: string
+          _resource_id?: string
+          _resource_type?: string
+        }
+        Returns: string
+      }
       purge_security_events: { Args: { _older_than?: string }; Returns: number }
       run_security_events_purge: {
         Args: { _older_than?: string }
