@@ -1,66 +1,138 @@
-# Plan: Retention purge + streaming CSV export wiring + tests
 
-Four tightly related changes across the Security Events feature.
+# MediReach+ Phased Delivery Roadmap
 
-## 1. Scheduled `purge_security_events` cron + dashboard surface
+A high-level plan covering the full request batch. We will pick **one phase at a time** and produce a detailed implementation plan for it before any code changes. Each phase lists scope, key files/tables, and the exit criteria that mean "done".
 
-**Enable extensions + schedule (via `supabase--insert`, not migration — contains anon key):**
-- Ensure `pg_cron` and `pg_net` extensions are enabled.
-- Schedule `purge-security-events-daily` at `15 3 * * *` UTC, calling `public.purge_security_events('90 days')` directly via SQL (no HTTP needed — function is in the same DB). Use `cron.schedule(name, schedule, $$ SELECT public.purge_security_events('90 days'::interval); $$)`. Guard with `cron.unschedule` if exists.
-- Add a `purge_log` table (`id`, `ran_at`, `deleted_count`, `retention`) and wrap purge in a small SQL wrapper `run_security_events_purge()` that inserts a row and returns the count. Update cron to call the wrapper.
+---
 
-**Migration (schema only):**
-- Create `public.security_events_purge_log` table + RLS (admins SELECT only, deny writes).
-- Create `public.run_security_events_purge()` SECURITY DEFINER wrapper.
-- Create `public.security_events_retention_status()` returning `{ retention_days, last_run_at, last_deleted, oldest_event_at, total_rows }` for the dashboard.
+## Phase 0 — Baseline audit (no feature work)
 
-**Dashboard (`SecurityEventsTab.tsx`):**
-- New small "Retention" card at top of the tab: shows retention window (90d), last purge time + deleted count, oldest event timestamp. Calls `supabase.rpc('security_events_retention_status')`.
+Goal: know exactly where we stand before adding more surface area.
 
-## 2. Streaming CSV export — frontend wiring + progress UI
+- Run `supabase--linter` and `security--run_security_scan`.
+- Read latest console/network/runtime errors from preview.
+- Sweep edge functions for CORS, JWT verification, Zod validation gaps.
+- Inventory existing migrations vs. tables actually referenced in code.
 
-**`SecurityEventsTab.tsx`:**
-- Replace the existing client-side CSV blob assembly. The "Export CSV" button now calls the `security-events-export` edge function via raw `fetch` (so we can stream and track progress) using `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/security-events-export` with the user's access token + `apikey` header.
-- POST body = current active filters + `since` window.
-- Use `response.body.getReader()` to read chunks, count `\n` to update a "rows received" counter, accumulate into a `Blob`, then trigger download with `Content-Disposition`'s suggested filename (parsed from header; fallback to timestamped name).
-- Progress UI: while streaming, swap the button for an inline state showing a small spinner, `rows received: N`, bytes (formatted), and a Cancel button (uses `AbortController`). On 403/429/4xx, parse JSON body and toast the error (include `Retry-After` value in the toast for 429s).
-- A11y: announce progress via `aria-live="polite"` on the status region.
+Exit: a short findings list grouped by severity that feeds the later phases.
 
-**Reusable helper:** extract download logic into `src/lib/streamingDownload.ts` (`streamCsvDownload({ url, token, body, signal, onProgress })`) so it stays testable and the component stays focused.
+---
 
-## 3. Integration tests for `security-events-export`
+## Phase 1 — Security & hardening foundation
 
-**New file:** `supabase/functions/security-events-export/export.e2e.test.ts`
+- Tighten CORS allowlist in `supabase/functions/_shared/cors.ts` (env-driven, no wildcard fallback).
+- Enforce `getClaims()` auth + Zod validation on every non-public edge function (`ai-chat`, `sms-gateway`, `ussd-handler`, `emergency-alert`, `chw-location-update`, `send-push-notification`, `notify-case-update`, `sms-retry`, `sms-webhook`).
+- Enable HIBP password protection (`configure_auth`).
+- Standardize structured error responses (no stack traces, no PII).
+- Verify all `SECURITY DEFINER` functions have `search_path` and revoked public EXECUTE.
+- Re-run linter; resolve remaining warnings or document exceptions in `mem://security/standards-hardening`.
 
-Each test loads `.env` via `https://deno.land/std@0.224.0/dotenv/load.ts` and hits the deployed endpoint via `fetch`. Tests:
+Exit: scanner clean (or each finding triaged), all edge functions validated + authed where required.
 
-1. **No auth → 401** with JSON `{error}` and CORS headers present.
-2. **Invalid bearer → 401** (random token).
-3. **Non-admin user → 403** — sign in as a regular test user via `supabase.auth.signInWithPassword` (creds from env: `TEST_USER_EMAIL`/`TEST_USER_PASSWORD`); skip with `Deno.test.ignore` if env not set so the suite stays green in fresh checkouts.
-4. **Admin happy path → 200** streaming `text/csv`, header row matches `created_at,event_type,scope,severity,ip_address,user_id,details`, `Content-Disposition` includes `attachment; filename="security-events-...csv"`, `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`. Drain body with `await res.text()`.
-5. **Validation failure → 400** when `since` is missing/not ISO; logs `validation_failed` to `security_events`.
-6. **Rate limit → 429** — burst 12 calls in parallel as admin (limit is 5/min/IP, 10/min/user). Assert at least one response has status 429, `Retry-After > 0`, `X-RateLimit-Limit`, `X-RateLimit-Remaining` headers, and JSON body with `retry_after_seconds` + `error`.
-7. After each test that triggers logging: `await flushSecurityEvents()`.
+---
 
-`sanitizeOps`/`sanitizeResources: false` because of long-lived sockets across parallel calls (matches existing e2e pattern).
+## Phase 2 — Database & content migrations
 
-## 4. Files
+- Migration: protocol schema updates (red flags, seek-help arrays, reference books JSON shape, bilingual steps normalization).
+- Migration: onboarding completion enforcement (`profiles.onboarding_completed` default + trigger checks).
+- Migration: push subscription uniqueness + cleanup of stale endpoints.
+- Data inserts (via `supabase--insert`): refreshed protocol content EN/SW, Tanzanian region/facility seed corrections.
 
-**New**
-- `supabase/functions/security-events-export/export.e2e.test.ts`
-- `src/lib/streamingDownload.ts`
+Exit: types regenerate cleanly; protocol library renders updated content in both languages.
 
-**Edit**
-- `src/components/admin/SecurityEventsTab.tsx` (CSV button → streaming + progress UI; retention status card)
+---
 
-**DB**
-- Migration: `security_events_purge_log` table + RLS, `run_security_events_purge()`, `security_events_retention_status()`.
-- `supabase--insert`: enable `pg_cron`/`pg_net`, unschedule old job if exists, schedule daily `run_security_events_purge` at 03:15 UTC.
+## Phase 3 — Onboarding flow + routing guardrails
 
-## 5. Verification
+- 6-step onboarding (Welcome → Profile → Medical → Location → Contacts → Notifications) — components already scaffolded; wire mandatory gate.
+- `ProtectedRoute` redirects to `/onboarding` when `profile.onboarding_completed === false`.
+- Persist progress between steps; resume on reload.
+- Update `App.tsx` routes + nav links accordingly.
 
-1. `supabase--insert` schedules the cron; manually invoke `SELECT public.run_security_events_purge();` once and confirm a `security_events_purge_log` row appears.
-2. Dashboard shows the new Retention card with last-run timestamp + deleted count.
-3. Click Export CSV with a filter set → spinner + "rows received" counter visible → file downloads with the expected name; cancel mid-stream aborts cleanly.
-4. `supabase--test_edge_functions({ functions: ["security-events-export"] })` → all tests pass (skipped tests OK if test creds not configured), exit 0.
-5. `supabase--curl_edge_functions` POST with no auth → 401; with admin auth + valid `since` → CSV stream with correct headers.
+Exit: new account cannot reach `/chat`, `/emergency`, `/dashboard` until onboarding is complete.
+
+---
+
+## Phase 4 — Offline-first PWA correctness
+
+- Audit `useServiceWorker`, `useOfflineData`, `offlineStorage`, `useBackgroundSync`.
+- Ensure SW registration is guarded (no register in Lovable preview/iframe).
+- Verify IndexedDB caches: protocols, facilities, queued emergency reports.
+- Background sync priority queue: emergencies > case updates > telemetry.
+- Toasts in EN/SW for offline-ready / update-available.
+
+Exit: airplane-mode test loads cached protocols + facilities and queues an emergency that flushes on reconnect.
+
+---
+
+## Phase 5 — Chat + Protocol UX polish
+
+- Markdown rendering hardening in `ChatMessageList` (sanitized, code blocks, lists, links open in new tab).
+- Red-flag symptom detector surfaces an inline alert card.
+- `ProtocolDetailModal`: fix steps data-format bug (handles both `{en:[], sw:[]}` and `[{step_en, step_sw}]`), add video resource + reference books section, bilingual toggle.
+
+Exit: chat renders rich markdown safely; every seeded protocol opens without console errors.
+
+---
+
+## Phase 6 — SMS / USSD / CHW operations
+
+- `sms-webhook`: persist delivery status, signature verification.
+- `sms-retry`: bulk retry UI in admin (status filter, dry-run count, batched execution with rate limiter).
+- Location-based CHW assignment: use `find_nearest_chw` RPC inside `emergency-alert`; record assignment + notify nearest CHW.
+- Real-time CHW location tracking already in `useRealtimeCHWLocations` — add staleness badge + map heatbeat.
+
+Exit: simulated emergency assigns nearest active CHW; failed SMS can be bulk-retried from admin.
+
+---
+
+## Phase 7 — Push notifications end-to-end
+
+- Verify VAPID keys present (already in secrets).
+- `usePushSubscription` saves endpoint with auth+p256dh keys.
+- `send-push-notification` uses service role + validates payload; `notify-case-update` triggers on case status change.
+- Admin can broadcast to CHWs in a region.
+
+Exit: CHW receives push within seconds of emergency assignment in their region.
+
+---
+
+## Phase 8 — Reports page + analytics
+
+- `/reports` page (CHW + admin) with date range filter, CSV export button (reusing the streaming export pattern from Security Events).
+- Recharts: case trends, response times, status overview, priority distribution (components already scaffolded).
+- Embeddable mode (`?embed=1`) hides chrome for iframe usage.
+
+Exit: report loads under 2s with seeded data; CSV downloads with active filters applied.
+
+---
+
+## Phase 9 — SEO + accessibility pass
+
+- Per-route `<title>` + meta description, single H1, JSON-LD for organization.
+- `robots.txt`, canonical tags, OG/Twitter cards.
+- Color contrast audit against medical theme tokens; large touch targets verified at 945px viewport.
+
+Exit: Lighthouse SEO ≥ 95, a11y ≥ 95 on Index, Emergency, Chat.
+
+---
+
+## Phase 10 — User-flow QA + regression tests
+
+- Edge-function Deno tests for each hardened endpoint (auth, validation, rate limit, happy path).
+- Manual scripted flow: signup → onboarding → chat → emergency → CHW assignment → push → report export.
+- Final linter + security scan + console error sweep.
+
+Exit: all tests green, scanner clean, no console errors on primary flows.
+
+---
+
+## How we'll proceed
+
+Reply with the phase number to start (recommended order: **0 → 1 → 2 → …**). I'll then produce a detailed, file-level implementation plan for just that phase and, on approval, execute it.
+
+### Technical notes
+- All DB structure via `supabase--migration`; data seeding via `supabase--insert`.
+- Edge function changes deploy automatically; do not edit `supabase/config.toml` project-level settings.
+- Memory files under `mem://` will be updated when a phase introduces durable rules (e.g. CORS allowlist policy, onboarding gate).
+- Bilingual EN/SW is a hard requirement for every user-facing string added in any phase.
