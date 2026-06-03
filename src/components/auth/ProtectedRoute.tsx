@@ -5,15 +5,21 @@ import { Loader2 } from 'lucide-react';
 interface ProtectedRouteProps {
   children: React.ReactNode;
   requiredRoles?: ('user' | 'chw' | 'admin')[];
+  /** Skip the onboarding-completed gate (used on the onboarding route itself). */
+  allowIncompleteOnboarding?: boolean;
 }
 
-const ProtectedRoute = ({ children, requiredRoles }: ProtectedRouteProps) => {
-  const { user, loading, rolesLoaded, hasRole } = useAuth();
+const ProtectedRoute = ({
+  children,
+  requiredRoles,
+  allowIncompleteOnboarding = false,
+}: ProtectedRouteProps) => {
+  const { user, profile, loading, rolesLoaded, hasRole } = useAuth();
   const location = useLocation();
 
   const isAuthenticated = !!user;
 
-  const hasRequiredRole = !requiredRoles || requiredRoles.length === 0 || 
+  const hasRequiredRole = !requiredRoles || requiredRoles.length === 0 ||
     (rolesLoaded && requiredRoles.some(role => hasRole(role)));
 
   if (loading || (requiredRoles && requiredRoles.length > 0 && !rolesLoaded)) {
@@ -29,6 +35,11 @@ const ProtectedRoute = ({ children, requiredRoles }: ProtectedRouteProps) => {
 
   if (!isAuthenticated) {
     return <Navigate to="/auth" state={{ from: location }} replace />;
+  }
+
+  // Gate the rest of the app behind onboarding completion.
+  if (!allowIncompleteOnboarding && profile && profile.onboarding_completed === false) {
+    return <Navigate to="/onboarding" replace />;
   }
 
   if (!hasRequiredRole) {

@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 import { z } from "https://esm.sh/zod@3.23.8";
-import { getCorsHeaders, getClientIP } from "../_shared/cors.ts";
+import { getCorsHeaders, getClientIP, rejectDisallowedOrigin } from "../_shared/cors.ts";
 import { enforceLimits } from "../_shared/rateLimit.ts";
 import { parseBody, badRequest, UuidSchema } from "../_shared/validation.ts";
 
@@ -19,6 +19,9 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
+
+  const originRejection = rejectDisallowedOrigin(req);
+  if (originRejection) return originRejection;
 
   try {
     const limited = await enforceLimits({

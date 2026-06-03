@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, BarChart3, TrendingUp, Users, Clock, Activity, MapPin } from 'lucide-react';
+import { ArrowLeft, BarChart3, TrendingUp, Users, Clock, Activity, MapPin, MessageSquare, ShieldAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { supabase } from '@/integrations/supabase/client';
@@ -45,6 +45,7 @@ export default function Reports({ embedded = false }: ReportsProps) {
   const [allCases, setAllCases] = useState<CaseData[]>([]);
   const [chwNames, setChwNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
+  const [adminMetrics, setAdminMetrics] = useState<{ smsTotal: number; smsDelivered: number; smsFailed: number; securityEvents24h: number } | null>(null);
   const [dateRange, setDateRange] = useState<DateRange>({
     from: subDays(new Date(), 30),
     to: new Date(),
@@ -83,6 +84,25 @@ export default function Reports({ embedded = false }: ReportsProps) {
     }
     fetchData();
   }, []);
+
+  // Admin-only: SMS delivery + security event aggregates
+  useEffect(() => {
+    if (authLoading || !isAdmin()) return;
+    let cancelled = false;
+    (async () => {
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const [{ data: sms }, { count: secCount }] = await Promise.all([
+        supabase.from('sms_logs').select('status').gte('created_at', since),
+        supabase.from('security_events').select('*', { count: 'exact', head: true }).gte('created_at', since),
+      ]);
+      if (cancelled) return;
+      const smsTotal = sms?.length ?? 0;
+      const smsDelivered = sms?.filter((r: { status: string | null }) => r.status === 'delivered' || r.status === 'sent').length ?? 0;
+      const smsFailed = sms?.filter((r: { status: string | null }) => r.status === 'failed').length ?? 0;
+      setAdminMetrics({ smsTotal, smsDelivered, smsFailed, securityEvents24h: secCount ?? 0 });
+    })();
+    return () => { cancelled = true; };
+  }, [authLoading, isAdmin]);
 
   const cases = useMemo(() => {
     return allCases.filter(c => {
@@ -295,6 +315,49 @@ export default function Reports({ embedded = false }: ReportsProps) {
             </CardContent>
           </Card>
         </div>
+
+        {/* Admin-only ops metrics (24h) */}
+        {adminMetrics && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Operations (last 24h) — Admin</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div>
+                  <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                    <MessageSquare className="h-4 w-4" />
+                    <span className="text-xs">SMS sent</span>
+                  </div>
+                  <p className="text-2xl font-bold text-foreground">{adminMetrics.smsTotal}</p>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                    <TrendingUp className="h-4 w-4" />
+                    <span className="text-xs">Delivery rate</span>
+                  </div>
+                  <p className="text-2xl font-bold text-foreground">
+                    {adminMetrics.smsTotal ? Math.round((adminMetrics.smsDelivered / adminMetrics.smsTotal) * 100) : 0}%
+                  </p>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                    <ShieldAlert className="h-4 w-4" />
+                    <span className="text-xs">SMS failures</span>
+                  </div>
+                  <p className="text-2xl font-bold text-destructive">{adminMetrics.smsFailed}</p>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                    <ShieldAlert className="h-4 w-4" />
+                    <span className="text-xs">Security events</span>
+                  </div>
+                  <p className="text-2xl font-bold text-foreground">{adminMetrics.securityEvents24h}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Trends */}
         <Card>
