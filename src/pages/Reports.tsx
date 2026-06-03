@@ -316,6 +316,49 @@ export default function Reports({ embedded = false }: ReportsProps) {
           </Card>
         </div>
 
+        {/* Admin-only ops metrics (24h) */}
+        {adminMetrics && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Operations (last 24h) — Admin</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div>
+                  <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                    <MessageSquare className="h-4 w-4" />
+                    <span className="text-xs">SMS sent</span>
+                  </div>
+                  <p className="text-2xl font-bold text-foreground">{adminMetrics.smsTotal}</p>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                    <TrendingUp className="h-4 w-4" />
+                    <span className="text-xs">Delivery rate</span>
+                  </div>
+                  <p className="text-2xl font-bold text-foreground">
+                    {adminMetrics.smsTotal ? Math.round((adminMetrics.smsDelivered / adminMetrics.smsTotal) * 100) : 0}%
+                  </p>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                    <ShieldAlert className="h-4 w-4" />
+                    <span className="text-xs">SMS failures</span>
+                  </div>
+                  <p className="text-2xl font-bold text-destructive">{adminMetrics.smsFailed}</p>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                    <ShieldAlert className="h-4 w-4" />
+                    <span className="text-xs">Security events</span>
+                  </div>
+                  <p className="text-2xl font-bold text-foreground">{adminMetrics.securityEvents24h}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Trends */}
         <Card>
           <CardHeader className="pb-2">
