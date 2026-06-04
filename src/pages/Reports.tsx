@@ -11,6 +11,7 @@ import {
   PieChart, Pie, Cell, LineChart, Line, Legend, AreaChart, Area,
 } from 'recharts';
 import { CSVExportButton } from '@/components/reports/CSVExportButton';
+import { AdminReportExportButton } from '@/components/reports/AdminReportExportButton';
 import { DateRangeFilter, DateRange } from '@/components/reports/DateRangeFilter';
 import { subDays, eachDayOfInterval, format, isWithinInterval, startOfDay, endOfDay, differenceInHours } from 'date-fns';
 
