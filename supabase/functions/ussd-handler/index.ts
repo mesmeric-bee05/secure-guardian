@@ -1,15 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
-import { getClientIP, rejectDisallowedOrigin } from "../_shared/cors.ts";
+import { getClientIP, getCorsHeaders, rejectDisallowedOrigin } from "../_shared/cors.ts";
 import { enforceLimits } from "../_shared/rateLimit.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Content-Type': 'text/plain',
-  'X-Content-Type-Options': 'nosniff',
-};
+const USSD_RESPONSE_HEADERS = { 'Content-Type': 'text/plain' };
 
 function sanitizeInput(input: string): string {
   if (!input || typeof input !== 'string') return '';
