@@ -20,6 +20,9 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const originRejection = rejectDisallowedOrigin(req);
+  if (originRejection) return originRejection;
+
   try {
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
     const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;

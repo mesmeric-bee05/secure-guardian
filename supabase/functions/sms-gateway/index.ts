@@ -17,6 +17,9 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const originRejection = rejectDisallowedOrigin(req);
+  if (originRejection) return originRejection;
+
   try {
     const AFRICAS_TALKING_API_KEY = Deno.env.get('AFRICAS_TALKING_API_KEY');
     const AFRICAS_TALKING_USERNAME = Deno.env.get('AFRICAS_TALKING_USERNAME');
