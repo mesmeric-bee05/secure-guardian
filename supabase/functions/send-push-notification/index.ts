@@ -11,6 +11,12 @@ const PushBodySchema = z.object({
   body: z.string().trim().max(500).optional(),
   tag: z.string().trim().max(120).optional(),
   data: z.record(z.string(), z.unknown()).optional(),
+  /** When set, only deliver to recipients holding this role in user_roles.
+   *  Used by notify-case-update to ensure CHW-targeted pushes never reach
+   *  patients or non-CHW users even if a row exists in push_subscriptions. */
+  target_role: z.enum(["user", "chw", "admin"]).optional(),
+  /** Test-only: when true, do not deliver; return the recipient ids instead. */
+  dry_run: z.boolean().optional(),
 }).strict();
 
 serve(async (req) => {
