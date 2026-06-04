@@ -53,3 +53,7 @@ verify_jwt = false
 
 [functions.security-events-export]
 verify_jwt = false
+
+[functions.reports-export]
+verify_jwt = false
+

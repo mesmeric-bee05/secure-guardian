@@ -11,6 +11,12 @@ const PushBodySchema = z.object({
   body: z.string().trim().max(500).optional(),
   tag: z.string().trim().max(120).optional(),
   data: z.record(z.string(), z.unknown()).optional(),
+  /** When set, only deliver to recipients holding this role in user_roles.
+   *  Used by notify-case-update to ensure CHW-targeted pushes never reach
+   *  patients or non-CHW users even if a row exists in push_subscriptions. */
+  target_role: z.enum(["user", "chw", "admin"]).optional(),
+  /** Test-only: when true, do not deliver; return the recipient ids instead. */
+  dry_run: z.boolean().optional(),
 }).strict();
 
 serve(async (req) => {
@@ -60,9 +66,30 @@ serve(async (req) => {
 
     const parsed = await parseBody(req, PushBodySchema);
     if (!parsed.ok || !parsed.data) return badRequest(parsed.error!, corsHeaders);
-    const { user_id, title, body: notifBody, data, tag } = parsed.data;
+    const { user_id, title, body: notifBody, data, tag, target_role, dry_run } = parsed.data;
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+    // Role gate: when target_role is provided, drop the request if the
+    // recipient does not hold that role. This guarantees admin/CHW broadcasts
+    // never leak to plain users even via stale subscription rows.
+    if (target_role) {
+      const { data: hasRole, error: roleErr } = await supabase.rpc("has_role", {
+        _user_id: user_id, _role: target_role,
+      });
+      if (roleErr) {
+        console.error("has_role check failed:", roleErr.message);
+        return new Response(JSON.stringify({ error: "Role check failed" }), {
+          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      if (!hasRole) {
+        return new Response(
+          JSON.stringify({ success: true, sent: 0, skipped: "role_mismatch", target_role }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+    }
 
     const { data: subscriptions, error: subError } = await supabase
       .from('push_subscriptions')
@@ -79,6 +106,17 @@ serve(async (req) => {
       return new Response(
         JSON.stringify({ success: true, sent: 0, message: 'No subscriptions found' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (dry_run) {
+      return new Response(
+        JSON.stringify({
+          success: true,
+          dry_run: true,
+          recipients: subscriptions.map((s) => ({ id: s.id, user_id: s.user_id })),
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
       );
     }
 

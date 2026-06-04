@@ -1,15 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
-import { getClientIP, rejectDisallowedOrigin } from "../_shared/cors.ts";
+import { getClientIP, getCorsHeaders, rejectDisallowedOrigin } from "../_shared/cors.ts";
 import { enforceLimits } from "../_shared/rateLimit.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Content-Type': 'text/plain',
-  'X-Content-Type-Options': 'nosniff',
-};
+const WEBHOOK_RESPONSE_HEADERS = { 'Content-Type': 'text/plain' };
 
 // Replay attack prevention
 const processedMessages = new Map<string, number>();
@@ -50,10 +44,14 @@ function parseDeliveryReport(data: unknown): { valid: boolean; report?: Delivery
 }
 
 serve(async (req) => {
+  const corsHeaders = getCorsHeaders(req);
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
-  
+
+  const originRejection = rejectDisallowedOrigin(req);
+  if (originRejection) return originRejection;
+
   if (req.method !== 'POST') {
     return new Response(
       JSON.stringify({ error: 'Method not allowed' }),
@@ -167,7 +165,7 @@ serve(async (req) => {
     console.error('SMS webhook error:', error instanceof Error ? error.message : 'Unknown');
     return new Response(
       JSON.stringify({ success: false }),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { status: 200, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } }
     );
   }
 });

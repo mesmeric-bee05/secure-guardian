@@ -74,6 +74,9 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const originRejection = rejectDisallowedOrigin(req);
+  if (originRejection) return originRejection;
+
   try {
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
