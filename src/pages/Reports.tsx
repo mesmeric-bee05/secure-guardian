@@ -356,6 +356,13 @@ export default function Reports({ embedded = false }: ReportsProps) {
                   <p className="text-2xl font-bold text-foreground">{adminMetrics.securityEvents24h}</p>
                 </div>
               </div>
+              <div className="flex flex-wrap items-center gap-3 mt-4 pt-4 border-t border-border">
+                <span className="text-xs text-muted-foreground">Streaming admin exports:</span>
+                <AdminReportExportButton dataset="cases" since={dateRange.from.toISOString()} until={dateRange.to.toISOString()} label="Cases CSV" />
+                <AdminReportExportButton dataset="sms" since={dateRange.from.toISOString()} until={dateRange.to.toISOString()} label="SMS CSV" />
+                <AdminReportExportButton dataset="security" since={dateRange.from.toISOString()} until={dateRange.to.toISOString()} label="Security CSV" />
+                <AdminReportExportButton dataset="protocols" since={new Date(0).toISOString()} label="Protocols CSV" />
+              </div>
             </CardContent>
           </Card>
         )}
