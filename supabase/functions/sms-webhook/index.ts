@@ -165,7 +165,7 @@ serve(async (req) => {
     console.error('SMS webhook error:', error instanceof Error ? error.message : 'Unknown');
     return new Response(
       JSON.stringify({ success: false }),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { status: 200, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } }
     );
   }
 });
