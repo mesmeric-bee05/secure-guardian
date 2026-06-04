@@ -100,7 +100,7 @@ for (const c of CASES) {
     assertEquals(ev.severity, "warn");
     assert(ev.details && typeof ev.details === "object", "details must be an object");
     assert("error" in ev.details, "details.error required");
-    assert(Array.isArray(ev.details.issues), "details.issues required");
+    assert(Array.isArray((ev.details as Record<string, unknown>).issues), "details.issues required");
 
     // Drain log inserts before cleanup
     await flushSecurityEvents();
