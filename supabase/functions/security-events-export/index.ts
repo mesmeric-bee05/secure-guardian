@@ -30,6 +30,9 @@ function csvEscape(v: unknown): string {
 serve(async (req) => {
   const corsHeaders = getCorsHeaders(req);
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  const originRejection = rejectDisallowedOrigin(req);
+  if (originRejection) return originRejection;
   if (req.method !== "POST") {
     return new Response(JSON.stringify({ error: "Method not allowed" }), {
       status: 405, headers: { ...corsHeaders, "Content-Type": "application/json" },
