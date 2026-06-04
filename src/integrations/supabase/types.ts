@@ -234,13 +234,18 @@ export type Database = {
           created_at: string | null
           id: string
           red_flags: string[] | null
-          reference_books: Json | null
+          red_flags_en: string[]
+          red_flags_sw: string[]
+          reference_books: Json
+          seek_help_en: string[]
+          seek_help_sw: string[]
           seek_help_when: string[] | null
           severity: string | null
           steps: Json
           title_en: string
           title_sw: string
           updated_at: string | null
+          video_provider: string | null
           video_url: string | null
         }
         Insert: {
@@ -250,13 +255,18 @@ export type Database = {
           created_at?: string | null
           id?: string
           red_flags?: string[] | null
-          reference_books?: Json | null
+          red_flags_en?: string[]
+          red_flags_sw?: string[]
+          reference_books?: Json
+          seek_help_en?: string[]
+          seek_help_sw?: string[]
           seek_help_when?: string[] | null
           severity?: string | null
           steps: Json
           title_en: string
           title_sw: string
           updated_at?: string | null
+          video_provider?: string | null
           video_url?: string | null
         }
         Update: {
@@ -266,13 +276,18 @@ export type Database = {
           created_at?: string | null
           id?: string
           red_flags?: string[] | null
-          reference_books?: Json | null
+          red_flags_en?: string[]
+          red_flags_sw?: string[]
+          reference_books?: Json
+          seek_help_en?: string[]
+          seek_help_sw?: string[]
           seek_help_when?: string[] | null
           severity?: string | null
           steps?: Json
           title_en?: string
           title_sw?: string
           updated_at?: string | null
+          video_provider?: string | null
           video_url?: string | null
         }
         Relationships: []
@@ -346,11 +361,14 @@ export type Database = {
           full_name: string
           id: string
           medical_conditions: string[] | null
-          onboarding_completed: boolean | null
+          onboarding_completed: boolean
+          onboarding_completed_at: string | null
+          onboarding_step: number
           phone_number: string | null
           preferred_language:
             | Database["public"]["Enums"]["language_preference"]
             | null
+          region: string | null
           updated_at: string | null
           user_id: string
         }
@@ -362,11 +380,14 @@ export type Database = {
           full_name: string
           id?: string
           medical_conditions?: string[] | null
-          onboarding_completed?: boolean | null
+          onboarding_completed?: boolean
+          onboarding_completed_at?: string | null
+          onboarding_step?: number
           phone_number?: string | null
           preferred_language?:
             | Database["public"]["Enums"]["language_preference"]
             | null
+          region?: string | null
           updated_at?: string | null
           user_id: string
         }
@@ -378,11 +399,14 @@ export type Database = {
           full_name?: string
           id?: string
           medical_conditions?: string[] | null
-          onboarding_completed?: boolean | null
+          onboarding_completed?: boolean
+          onboarding_completed_at?: string | null
+          onboarding_step?: number
           phone_number?: string | null
           preferred_language?:
             | Database["public"]["Enums"]["language_preference"]
             | null
+          region?: string | null
           updated_at?: string | null
           user_id?: string
         }
@@ -393,7 +417,9 @@ export type Database = {
           auth: string
           created_at: string | null
           endpoint: string
+          failure_count: number
           id: string
+          last_seen_at: string
           p256dh: string
           updated_at: string | null
           user_id: string
@@ -402,7 +428,9 @@ export type Database = {
           auth: string
           created_at?: string | null
           endpoint: string
+          failure_count?: number
           id?: string
+          last_seen_at?: string
           p256dh: string
           updated_at?: string | null
           user_id: string
@@ -411,7 +439,9 @@ export type Database = {
           auth?: string
           created_at?: string | null
           endpoint?: string
+          failure_count?: number
           id?: string
+          last_seen_at?: string
           p256dh?: string
           updated_at?: string | null
           user_id?: string
@@ -651,6 +681,10 @@ export type Database = {
           _resource_type?: string
         }
         Returns: string
+      }
+      prune_stale_push_subscriptions: {
+        Args: { _older_than?: string }
+        Returns: number
       }
       purge_security_events: { Args: { _older_than?: string }; Returns: number }
       run_security_events_purge: {
