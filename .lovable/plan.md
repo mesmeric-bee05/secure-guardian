@@ -1,119 +1,96 @@
-# Phase 2 — Database & Content Migrations + Cross-cutting Hardening
+# Phase 3 — Security Reporting, CI Gate & SEO Pass
 
-Scope covers four work-streams. All DB structure goes through `supabase--migration`; data seeding through `supabase--insert`. Edge function changes deploy automatically.
+This phase wires the security scanners into CI, produces a consolidated findings report (including Wiz / `connector_security_scan`), and finishes the SEO baseline. No product features change.
 
----
+## What you'll see when it ships
+- A new `.github/workflows/security-gate.yml` that fails the build when scanner findings exceed a configured severity (default: `high`).
+- `security/REMEDIATION.md` — one row per current finding with file, function, table, and owner.
+- `security/findings-report.md` — consolidated, timestamped snapshot of every scanner (Supabase, Supabase-Lov, agent_security, connector_security_scan/Wiz).
+- SEO baseline applied to `index.html` + `public/robots.txt` + `public/sitemap.xml` (title, description, canonical, OG/Twitter, JSON-LD).
+- `mem://security/standards-hardening` refreshed with Wiz/connector scan provenance (timestamps + source tool + affected objects).
 
-## Work-stream A — Phase 2 DB & content migrations
+## Plan
 
-### A1. Migration: protocol schema normalization
-File: `supabase/migrations/<ts>_protocols_normalize.sql`
-- `ALTER TABLE public.first_aid_protocols`
-  - Add `red_flags_en text[] NOT NULL DEFAULT '{}'`, `red_flags_sw text[] NOT NULL DEFAULT '{}'`.
-  - Add `seek_help_en text[] NOT NULL DEFAULT '{}'`, `seek_help_sw text[] NOT NULL DEFAULT '{}'`.
-  - Add `reference_books jsonb NOT NULL DEFAULT '[]'::jsonb` (array of `{title, author, url, lang}`).
-  - Add `video_url text`, `video_provider text CHECK (video_provider IN ('youtube','vimeo','mp4') OR video_provider IS NULL)`.
-  - Normalize `steps` to canonical `jsonb` shape `[{order:int, en:text, sw:text}]`. Add CHECK `jsonb_typeof(steps)='array'`.
-- Backfill `UPDATE` to coerce legacy `{en:[], sw:[]}` rows into the canonical array using `jsonb_array_elements` + `generate_series`.
-- Re-apply RLS grants if any policy was dropped (none expected); add `GRANT SELECT` to `anon, authenticated` (already public-read).
+### 1. CI security gate
+- Add `scripts/security-gate.mjs`. Inputs:
+  - `SEVERITY_THRESHOLD` env (`info|warn|high|critical`, default `high`).
+  - `security/findings.json` produced by a fetch step (Supabase linter + cached scanner snapshot committed to repo under `security/snapshots/`).
+- Exit 1 when any finding ≥ threshold is not present in `security/allowlist.json` (keyed by `scanner_name + internal_id`, with `reason` + `expires_at`).
+- New workflow `.github/workflows/security-gate.yml`:
+  - Runs on PR + push to `main`.
+  - Steps: checkout → `node scripts/security-gate.mjs` → upload `security/findings-report.md` as artifact.
+- Extend existing `.github/workflows/security.yml` to also call `scripts/security-gate.mjs` after the secret scan so a single workflow enforces both.
 
-### A2. Migration: onboarding completion enforcement
-File: `supabase/migrations/<ts>_profiles_onboarding.sql`
-- `ALTER TABLE public.profiles`
-  - Add `onboarding_completed boolean NOT NULL DEFAULT false` (if missing).
-  - Add `onboarding_step smallint NOT NULL DEFAULT 0 CHECK (onboarding_step BETWEEN 0 AND 6)`.
-  - Add `onboarding_completed_at timestamptz`.
-- Trigger `profiles_onboarding_guard` (BEFORE UPDATE): when `onboarding_completed` flips false→true, require `full_name`, `preferred_language`, `region`, and at least one row in `emergency_contacts` for the user; stamp `onboarding_completed_at = now()`.
-- Backfill existing rows with `full_name` + `region` set → `onboarding_completed = true`.
+### 2. Remediation task list
+- Generate `security/REMEDIATION.md` from `security/findings.json`. For each finding row:
+  - `id`, `scanner`, `severity`, `created_at`
+  - `affected_object` (table / function / file / edge function)
+  - `file` link (e.g. `supabase/migrations/...sql#Lxx` or `supabase/functions/<name>/index.ts`)
+  - `recommended_fix` (1 line)
+  - `status` (`open` / `accepted-risk` / `fixed`)
+- For the two current Supabase findings (already accepted-risk), pre-populate rows pointing to `pg_net` extension + the 8 RLS-helper / admin SECURITY DEFINER functions.
 
-### A3. Migration: push subscription hardening
-File: `supabase/migrations/<ts>_push_subscriptions_unique.sql`
-- Add `UNIQUE (endpoint)` on `public.push_subscriptions` (drop dup rows first by keeping latest `updated_at`).
-- Add `last_seen_at timestamptz NOT NULL DEFAULT now()` + index `(user_id, last_seen_at DESC)`.
-- Add `failure_count int NOT NULL DEFAULT 0`.
-- Function `prune_stale_push_subscriptions(_older_than interval default '30 days')` SECURITY DEFINER, service_role-only EXECUTE; deletes rows where `last_seen_at < now() - _older_than OR failure_count >= 5`.
+### 3. Wiz / connector_security_scan ingestion
+- `scripts/ingest-scans.mjs` reads `tool-results://security--get_scan_results` style JSON (or a committed snapshot) and writes:
+  - `security/snapshots/<scanner>-<timestamp>.json`
+  - Appends a normalized block to `mem://security/standards-hardening` via the memory file: `Source: <scanner_name>`, `Run at: <iso>`, `Affected objects: [...]`, `Severity: ...`, `Status: open|accepted`.
+- For empty scanners (Wiz/agent_security/supabase_lov today) the script writes a "no findings as of <ts>" line so the audit trail is explicit.
 
-### A4. Data seeding (post-migration approval)
-Via `supabase--insert`:
-- Refresh ~12 core protocols (CPR, choking adult/infant, bleeding, burns, fracture, shock, stroke FAST, seizure, snakebite, drowning, heat stroke, anaphylaxis) with bilingual `steps`, `red_flags_*`, `seek_help_*`, reference_books, video_url.
-- Tanzanian region/facility corrections: ensure Dar es Salaam, Arusha, Mwanza, Dodoma, Mbeya, Zanzibar major hospitals present with phone + coordinates.
+### 4. Consolidated findings report
+- `security/findings-report.md` produced by `scripts/render-report.mjs`:
+  - Header: project, generated-at, severity threshold, gate status.
+  - Per-scanner section: counts by severity, table of findings with links into REMEDIATION.md.
+  - Footer: accepted-risk list pulled from `security/allowlist.json`.
+- Wired into the CI workflow as a build artifact + committed snapshot when run on `main`.
 
-Exit: regenerated `types.ts` compiles, `ProtocolDetailModal` renders both formats, `useProtocols` returns new arrays.
+### 5. Re-run scans
+- Document a one-line command for humans (`npm run security:scan`) that:
+  - Invokes the platform `run_security_scan` tool via a thin Node wrapper (best-effort; falls back to the committed snapshot in offline CI).
+  - Re-renders the consolidated report.
+- The next agent action after this phase ships will be to call `security--run_security_scan` so the live scanners refresh; the script then re-renders the report from the new snapshot.
 
----
+### 6. SEO baseline
+- `index.html`:
+  - `<title>MediReach+ — Emergency & Health AI for Tanzania</title>` (≤60 chars)
+  - `<meta name="description">` (≤160 chars, bilingual hint)
+  - `<link rel="canonical" href="/">`
+  - OpenGraph + Twitter tags (no image until asset exists)
+  - JSON-LD `MedicalWebPage` + `Organization` blocks
+  - Single H1 verified on `src/pages/Index.tsx`
+- `public/robots.txt`: allow all, no sitemap line until custom domain confirmed.
+- `public/sitemap.xml`: keep relative-URL placeholder with TODO.
+- Run the SEO scanner after the file changes and mark fixed findings via `seo--update_findings`.
 
-## Work-stream B — Edge function CORS / origin rejection test suite
+### 7. Errors & polish (only what scanners actually surface)
+- Re-run `supabase--linter` and address anything new the previous phases introduced.
+- Address any `tsc`/build errors that surface from the new scripts (scripts are ESM, no project type changes).
 
-File: `supabase/functions/_shared/cors.e2e.test.ts` (new)
-- Import `isOriginAllowed`, `rejectDisallowedOrigin`, `getCorsHeaders` from `_shared/cors.ts`.
-- Unit assertions:
-  - Allowed static origin → `getCorsHeaders` reflects `Access-Control-Allow-Origin`.
-  - Disallowed origin → no `Allow-Origin` header, `Vary: Origin` present, base security headers (`X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`) present.
-  - `rejectDisallowedOrigin` returns null for OPTIONS, null for allowed POST, 403 JSON for disallowed POST.
-- Live HTTP test against each deployed function (loop): for `ai-chat, sms-gateway, ussd-handler, emergency-alert, sms-webhook, sms-retry, chw-location-update, send-push-notification, notify-case-update, security-events-export`:
-  1. `OPTIONS` with `Origin: https://evil.example` → 200/204, security headers present, no `Allow-Origin` reflection.
-  2. `POST` with `Origin: https://evil.example` → 403, JSON `{error:"Origin not allowed"}`, security headers present.
-  3. `OPTIONS` with allowed origin → `Allow-Origin` reflected.
-- Uses `Deno.test` + `std/dotenv` per project convention; consumes every response body.
+## Technical Details
 
----
+### File map
+```text
+.github/workflows/security-gate.yml      (new)
+.github/workflows/security.yml           (edit — chain gate after secret-scan)
+scripts/security-gate.mjs                (new)
+scripts/ingest-scans.mjs                 (new)
+scripts/render-report.mjs                (new)
+security/allowlist.json                  (new — seeded with the 2 accepted findings)
+security/snapshots/.gitkeep              (new)
+security/REMEDIATION.md                  (generated, committed)
+security/findings-report.md              (generated, committed)
+index.html                               (edit — SEO head)
+public/robots.txt                        (verify)
+public/sitemap.xml                       (verify)
+```
 
-## Work-stream C — Reports page rate limiting + streaming CSV export
+### Severity model
+`info < warn < high < critical`. Threshold env compares numerically. Allowlist entries require `reason` and optional `expires_at` (ISO); expired entries no longer suppress the gate.
 
-### C1. Edge function: `reports-export` (new)
-File: `supabase/functions/reports-export/index.ts`
-- Admin-only: `getClaims()` → `is_admin` RPC check; 401/403 with structured JSON.
-- Zod body: `{ since: isoDateTime, until?: isoDateTime, dataset: 'sms'|'security'|'cases'|'protocols' }`.
-- Shared `enforceLimits({ scope:'reports-export', ipLimitPerMin: 5, userLimitPerMin: 10 })` returning standard 429 with `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining`.
-- Streams CSV via `ReadableStream` + service-role `select` paged 1k rows, writes `Content-Type: text/csv`, `Content-Disposition: attachment; filename="report-<dataset>-<date>.csv"`, `Cache-Control: no-store`, security headers, CORS.
-- Audit-log every export attempt (start + cancel + error) via `log_admin_action`.
-- Config: add `[functions.reports-export]` block with `verify_jwt = false` (matches sibling pattern).
+### Memory write
+Append-only block to `mem://security/standards-hardening` per scan ingest. Index entry stays as-is.
 
-### C2. Frontend integration
-- `src/pages/Reports.tsx`: replace per-dataset download buttons with `<CSVExportButton dataset="…" />` that reuses `streamCsvDownload` from `src/lib/streamingDownload.ts` (already supports 429 retry + countdown).
-- `src/components/reports/CSVExportButton.tsx`: surface streaming progress (bytes, rows, retry countdown) via existing helper UI; cancel button aborts via `AbortController` and logs cancel action.
-- Admin gate: hide button when `!profile.is_admin`.
+### Out of scope
+- No product/feature changes, no schema migrations, no edge function logic changes.
+- No new external services or secrets.
 
-### C3. Tests
-File: `supabase/functions/reports-export/export.e2e.test.ts`
-- Mirror the existing security-events-export test contract (401/403/400/200 stream/429 with headers).
-
----
-
-## Work-stream D — Onboarding → case status → CHW push E2E test
-
-### D1. Edge function test
-File: `supabase/functions/notify-case-update/push.e2e.test.ts` (new)
-- Requires env: `ADMIN_TEST_EMAIL/PASSWORD`, `CHW_TEST_EMAIL/PASSWORD`, `USER_TEST_EMAIL/PASSWORD` (test-only seed).
-- Flow:
-  1. Sign in as new user → call `/profiles` upsert with onboarding fields → assert `onboarding_completed=true` after trigger; insert one `emergency_contacts` row first.
-  2. Sign in as CHW → register a fake push subscription via service-role insert into `push_subscriptions` (real Web Push not delivered; we assert dispatch).
-  3. As user, POST `/functions/v1/emergency-alert` → assigns nearest CHW (seeded coords).
-  4. As admin/service, update `emergency_cases.status='in_progress'` → triggers `notify-case-update`.
-  5. Mock `send-push-notification` by intercepting via a wrapper env flag `PUSH_DRY_RUN=1` that returns the recipient list instead of calling Web Push.
-  6. Assert response contains exactly the CHW's `user_id`; assert no non-CHW user_id present (permission gate).
-- Negative test: same flow with a `user`-role subscription → asserts that subscription is filtered out.
-
-### D2. Supporting helper
-File: `supabase/functions/_shared/pushDispatch.ts` (extract list-recipients logic so it's testable; dry-run flag honored).
-
-Exit: `supabase--test_edge_functions` green for all three new test files; types regen clean; admin reports export downloads bilingual CSV; CHW receives push on case status change.
-
----
-
-## Execution order (after approval)
-
-1. Run A1 → A2 → A3 migrations (sequential; await regen between each if needed).
-2. Seed A4 data.
-3. Implement B (cors tests) — pure additive, no risk.
-4. Implement C1 + C3 edge function + tests, then C2 frontend.
-5. Implement D1 + D2.
-6. Run `supabase--linter` + `security--run_security_scan` + full Deno test suite; fix any regressions.
-7. Update `mem://features/user-onboarding` (trigger guard), `mem://features/first-aid-protocols` (canonical steps shape), `mem://security/standards-hardening` (origin-rejection test coverage).
-
-## Technical notes (non-user-facing)
-
-- All new public-schema objects include explicit `GRANT` blocks per project rule.
-- `SECURITY DEFINER` helpers default to `service_role`-only EXECUTE; widen only when an RLS policy or admin UI needs it.
-- No edits to `supabase/config.toml` other than adding the new `[functions.reports-export]` block.
-- Bilingual EN/SW enforced in seeded protocol content and all new UI strings.
+Reply "go" to execute, or tell me what to adjust.

@@ -1,0 +1,34 @@
+name: Security Gate
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    env:
+      SEVERITY_THRESHOLD: ${{ vars.SECURITY_GATE_THRESHOLD || 'high' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - name: Render report from latest snapshot
+        run: |
+          if [ -f security/snapshots/latest.json ]; then
+            node scripts/render-report.mjs
+          else
+            echo "No snapshot present; gate will treat as empty."
+          fi
+      - name: Run security gate
+        run: node scripts/security-gate.mjs
+      - name: Upload findings report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-findings-report
+          path: |
+            security/findings-report.md
+            security/REMEDIATION.md
+            security/snapshots/latest.json
+          if-no-files-found: ignore

@@ -8,7 +8,10 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "security:ingest": "node scripts/ingest-scans.mjs",
+    "security:render": "node scripts/render-report.mjs",
+    "security:gate": "node scripts/security-gate.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
