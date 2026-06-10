@@ -1,0 +1,46 @@
+{
+  "generated_at": "2026-06-10T12:51:09.083Z",
+  "scanners": {
+    "agent_security": {
+      "scanner_name": "agent_security",
+      "timestamp": "2026-04-08T13:31:12.735192Z",
+      "up_to_date": false,
+      "findings": []
+    },
+    "connector_security_scan": {
+      "scanner_name": "connector_security_scan",
+      "timestamp": "2026-04-03T02:40:15.465686Z",
+      "up_to_date": false,
+      "findings": []
+    },
+    "supabase": {
+      "scanner_name": "supabase",
+      "timestamp": "2026-06-01T11:49:23.205984488Z",
+      "up_to_date": false,
+      "findings": [
+        {
+          "id": "SUPA_authenticated_security_definer_function_executable",
+          "internal_id": "SUPA_authenticated_security_definer_function_executable",
+          "name": "Signed-In Users Can Execute SECURITY DEFINER Function",
+          "level": "warn",
+          "link": "https://supabase.com/docs/guides/database/database-linter?lint=0029_authenticated_security_definer_function_executable",
+          "created_at": "2026-06-01T11:49:23.205984488Z"
+        },
+        {
+          "id": "SUPA_extension_in_public",
+          "internal_id": "SUPA_extension_in_public",
+          "name": "Extension in Public",
+          "level": "warn",
+          "link": "https://supabase.com/docs/guides/database/database-linter?lint=0014_extension_in_public",
+          "created_at": "2026-06-01T11:49:23.205984488Z"
+        }
+      ]
+    },
+    "supabase_lov": {
+      "scanner_name": "supabase_lov",
+      "timestamp": "2026-04-08T13:31:12.735191Z",
+      "up_to_date": false,
+      "findings": []
+    }
+  }
+}
