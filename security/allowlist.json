@@ -1,0 +1,19 @@
+{
+  "$schema": "./allowlist.schema.json",
+  "entries": [
+    {
+      "scanner_name": "supabase",
+      "internal_id": "SUPA_authenticated_security_definer_function_executable",
+      "reason": "RLS helpers (has_role/is_admin/is_chw) must be callable by authenticated; admin RPCs gate internally with is_admin(auth.uid()) and raise 'forbidden'. All other SD functions have EXECUTE revoked.",
+      "expires_at": null,
+      "owner": "platform-security"
+    },
+    {
+      "scanner_name": "supabase",
+      "internal_id": "SUPA_extension_in_public",
+      "reason": "pg_net must live in public schema for managed pg_cron jobs (security_events purge, push dispatch). Moving it breaks cron.",
+      "expires_at": null,
+      "owner": "platform-security"
+    }
+  ]
+}
