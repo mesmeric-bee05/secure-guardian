@@ -1,96 +1,76 @@
-# Phase 3 — Security Reporting, CI Gate & SEO Pass
 
-This phase wires the security scanners into CI, produces a consolidated findings report (including Wiz / `connector_security_scan`), and finishes the SEO baseline. No product features change.
+# Plan — Phase 4: Security CI/Issue Automation + Link Integrity
 
-## What you'll see when it ships
-- A new `.github/workflows/security-gate.yml` that fails the build when scanner findings exceed a configured severity (default: `high`).
-- `security/REMEDIATION.md` — one row per current finding with file, function, table, and owner.
-- `security/findings-report.md` — consolidated, timestamped snapshot of every scanner (Supabase, Supabase-Lov, agent_security, connector_security_scan/Wiz).
-- SEO baseline applied to `index.html` + `public/robots.txt` + `public/sitemap.xml` (title, description, canonical, OG/Twitter, JSON-LD).
-- `mem://security/standards-hardening` refreshed with Wiz/connector scan provenance (timestamps + source tool + affected objects).
+Builds on the existing `scripts/security-{gate,ingest,render}.mjs` + `security/snapshots/latest.json` + `security/REMEDIATION.md` infra. No product/runtime code is touched.
 
-## Plan
+## 1. CI annotations on PRs (`scripts/security-annotate.mjs`)
+- New Node script that reads `security/snapshots/latest.json` + `security/allowlist.json` and the same `FIX_MAP` used by `render-report.mjs` (extract to `scripts/lib/findingMap.mjs` so both scripts share it).
+- For each non-allowlisted finding ≥ threshold, emit a GitHub workflow command:
+  ```
+  ::error file=<file>,line=<line>,title=<scanner:internal_id>::<name> — affected: <affected>
+  ```
+  When `FIX_MAP` doesn't have a line, omit `line=`. Allowlisted findings emit `::warning` instead.
+- Wire into `.github/workflows/security-gate.yml` as a step that runs after `render-report` and before `security-gate.mjs`, so annotations appear inline on the PR Files-changed view regardless of gate outcome.
+- Also write a Markdown step-summary (`$GITHUB_STEP_SUMMARY`) containing the rendered `security/findings-report.md` + a "Blocking" table for at-a-glance PR review.
 
-### 1. CI security gate
-- Add `scripts/security-gate.mjs`. Inputs:
-  - `SEVERITY_THRESHOLD` env (`info|warn|high|critical`, default `high`).
-  - `security/findings.json` produced by a fetch step (Supabase linter + cached scanner snapshot committed to repo under `security/snapshots/`).
-- Exit 1 when any finding ≥ threshold is not present in `security/allowlist.json` (keyed by `scanner_name + internal_id`, with `reason` + `expires_at`).
-- New workflow `.github/workflows/security-gate.yml`:
-  - Runs on PR + push to `main`.
-  - Steps: checkout → `node scripts/security-gate.mjs` → upload `security/findings-report.md` as artifact.
-- Extend existing `.github/workflows/security.yml` to also call `scripts/security-gate.mjs` after the secret scan so a single workflow enforces both.
+## 2. Auto-open GitHub issues per remediation task (`scripts/security-open-issues.mjs` + `.github/workflows/security-issues.yml`)
+- Script reads snapshot + allowlist + `FIX_MAP`. For each non-allowlisted finding:
+  - Title: `[security] <scanner>:<internal_id> — <name>`
+  - Body: severity, scanner, created_at, affected object, file link (`https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/<file>`), recommended fix, scanner link, owner (from allowlist or default `platform-security`).
+  - Labels: `security`, `severity:<level>`, `scanner:<name>`.
+  - Idempotency key: hidden HTML comment `<!-- security-finding-id: <scanner>:<internal_id> -->`. Script lists open + closed issues with label `security`, matches on the marker, and skips/updates instead of creating duplicates. Closes issues whose finding is no longer present or is now allowlisted (comment + close).
+- Uses `gh` CLI (preinstalled on `ubuntu-latest`) with `GITHUB_TOKEN` (no extra secret needed).
+- Workflow triggers: `workflow_dispatch` + after the nightly scan workflow succeeds + on push to `main` when `security/snapshots/latest.json` changes.
 
-### 2. Remediation task list
-- Generate `security/REMEDIATION.md` from `security/findings.json`. For each finding row:
-  - `id`, `scanner`, `severity`, `created_at`
-  - `affected_object` (table / function / file / edge function)
-  - `file` link (e.g. `supabase/migrations/...sql#Lxx` or `supabase/functions/<name>/index.ts`)
-  - `recommended_fix` (1 line)
-  - `status` (`open` / `accepted-risk` / `fixed`)
-- For the two current Supabase findings (already accepted-risk), pre-populate rows pointing to `pg_net` extension + the 8 RLS-helper / admin SECURITY DEFINER functions.
+## 3. Nightly scan + consolidated report artifact (`.github/workflows/security-nightly.yml`)
+- Cron: `0 3 * * *` (UTC) + `workflow_dispatch`.
+- Steps:
+  1. Checkout, setup-node 20.
+  2. `node scripts/scan-secrets.mjs` (existing).
+  3. `npm run security:ingest -- security/raw-scan.json` — for now we re-ingest the committed `security/raw-scan.json`; add a `SCAN_INPUT` env so a future provider-side hook can drop fresh Wiz/`connector_security_scan` JSON at `security/raw-scan.json` before this step. Document the contract in `security/README.md`.
+  4. `npm run security:render`.
+  5. Upload `security/findings-report.md`, `security/REMEDIATION.md`, `security/snapshots/*.json` as artifact `security-nightly-<run_id>`.
+  6. If `git diff` shows changes under `security/snapshots/` or `security/*.md`, open a PR via `peter-evans/create-pull-request@v6` titled `chore(security): nightly snapshot <date>` so changes are reviewable (no direct push to `main`).
+  7. Trigger `security-issues.yml` via `workflow_run` so issues stay in sync.
 
-### 3. Wiz / connector_security_scan ingestion
-- `scripts/ingest-scans.mjs` reads `tool-results://security--get_scan_results` style JSON (or a committed snapshot) and writes:
-  - `security/snapshots/<scanner>-<timestamp>.json`
-  - Appends a normalized block to `mem://security/standards-hardening` via the memory file: `Source: <scanner_name>`, `Run at: <iso>`, `Affected objects: [...]`, `Severity: ...`, `Status: open|accepted`.
-- For empty scanners (Wiz/agent_security/supabase_lov today) the script writes a "no findings as of <ts>" line so the audit trail is explicit.
+## 4. Remediation link-integrity tests (`scripts/security-verify-links.mjs` + Vitest)
+- New script + a Vitest spec `scripts/__tests__/security-links.test.mjs`:
+  - Parses `security/REMEDIATION.md` and the shared `FIX_MAP`.
+  - For every row, verifies:
+    - `file` exists on disk (skip pseudo-paths like `supabase (extension)` — flagged via a `pseudo:` prefix in `FIX_MAP`).
+    - For `affected` entries shaped `public.<fn>` / `public.<table>`: ripgrep the file for the symbol name; fail if not found.
+    - For migration SQL files: also assert `CREATE OR REPLACE FUNCTION public.<fn>` (functions) or `CREATE TABLE public.<table>` (tables) appears.
+  - Test fails on any miss with the offending row printed.
+- Add `vitest` config entry (already in repo) — task runs in CI via existing test workflow and locally with `bunx vitest run scripts/__tests__/security-links.test.mjs`.
+- Add `.github/workflows/security-links.yml` (PRs touching `supabase/migrations/**`, `supabase/functions/**`, `security/**`, `scripts/lib/findingMap.mjs`) that runs only this spec for fast feedback.
 
-### 4. Consolidated findings report
-- `security/findings-report.md` produced by `scripts/render-report.mjs`:
-  - Header: project, generated-at, severity threshold, gate status.
-  - Per-scanner section: counts by severity, table of findings with links into REMEDIATION.md.
-  - Footer: accepted-risk list pulled from `security/allowlist.json`.
-- Wired into the CI workflow as a build artifact + committed snapshot when run on `main`.
+## 5. Shared module + housekeeping
+- Extract `FIX_MAP` + severity helpers from `scripts/render-report.mjs` into `scripts/lib/findingMap.mjs`. Update `render-report.mjs`, `security-annotate.mjs`, `security-open-issues.mjs`, `security-verify-links.mjs` to import it.
+- Add `npm run` aliases: `security:annotate`, `security:issues`, `security:verify-links`.
+- `security/README.md`: document the snapshot file contract, allowlist format, and where to drop Wiz/connector raw output for nightly ingestion.
 
-### 5. Re-run scans
-- Document a one-line command for humans (`npm run security:scan`) that:
-  - Invokes the platform `run_security_scan` tool via a thin Node wrapper (best-effort; falls back to the committed snapshot in offline CI).
-  - Re-renders the consolidated report.
-- The next agent action after this phase ships will be to call `security--run_security_scan` so the live scanners refresh; the script then re-renders the report from the new snapshot.
+## File-level summary
 
-### 6. SEO baseline
-- `index.html`:
-  - `<title>MediReach+ — Emergency & Health AI for Tanzania</title>` (≤60 chars)
-  - `<meta name="description">` (≤160 chars, bilingual hint)
-  - `<link rel="canonical" href="/">`
-  - OpenGraph + Twitter tags (no image until asset exists)
-  - JSON-LD `MedicalWebPage` + `Organization` blocks
-  - Single H1 verified on `src/pages/Index.tsx`
-- `public/robots.txt`: allow all, no sitemap line until custom domain confirmed.
-- `public/sitemap.xml`: keep relative-URL placeholder with TODO.
-- Run the SEO scanner after the file changes and mark fixed findings via `seo--update_findings`.
-
-### 7. Errors & polish (only what scanners actually surface)
-- Re-run `supabase--linter` and address anything new the previous phases introduced.
-- Address any `tsc`/build errors that surface from the new scripts (scripts are ESM, no project type changes).
-
-## Technical Details
-
-### File map
 ```text
-.github/workflows/security-gate.yml      (new)
-.github/workflows/security.yml           (edit — chain gate after secret-scan)
-scripts/security-gate.mjs                (new)
-scripts/ingest-scans.mjs                 (new)
-scripts/render-report.mjs                (new)
-security/allowlist.json                  (new — seeded with the 2 accepted findings)
-security/snapshots/.gitkeep              (new)
-security/REMEDIATION.md                  (generated, committed)
-security/findings-report.md              (generated, committed)
-index.html                               (edit — SEO head)
-public/robots.txt                        (verify)
-public/sitemap.xml                       (verify)
+scripts/
+  lib/findingMap.mjs                NEW shared FIX_MAP + severity utils
+  security-annotate.mjs             NEW PR annotations + step summary
+  security-open-issues.mjs          NEW idempotent gh issue sync
+  security-verify-links.mjs         NEW link/function/table validator
+  __tests__/security-links.test.mjs NEW vitest spec
+  render-report.mjs                 EDIT import shared map
+.github/workflows/
+  security-gate.yml                 EDIT add annotate step + step summary
+  security-nightly.yml              NEW cron + artifact + PR
+  security-issues.yml               NEW gh issue sync
+  security-links.yml                NEW link-integrity check
+security/README.md                  NEW contract docs
+package.json                        EDIT new scripts
 ```
 
-### Severity model
-`info < warn < high < critical`. Threshold env compares numerically. Allowlist entries require `reason` and optional `expires_at` (ISO); expired entries no longer suppress the gate.
+## Out of scope
+- No changes to app runtime, RLS, migrations, or edge functions.
+- No new external services or secrets (uses default `GITHUB_TOKEN`).
+- Real Wiz/`connector_security_scan` API ingestion is stubbed via the existing `security/raw-scan.json` drop point — wiring an actual provider webhook is a follow-up once credentials/endpoint are decided.
 
-### Memory write
-Append-only block to `mem://security/standards-hardening` per scan ingest. Index entry stays as-is.
-
-### Out of scope
-- No product/feature changes, no schema migrations, no edge function logic changes.
-- No new external services or secrets.
-
-Reply "go" to execute, or tell me what to adjust.
+Reply "go" to implement, or tell me what to adjust (e.g. different cron, push-instead-of-PR for nightly, additional labels).
