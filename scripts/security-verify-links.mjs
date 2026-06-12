@@ -24,27 +24,48 @@ function parseAffected(affected) {
     .map((s) => s.slice("public.".length));
 }
 
+async function listSqlFiles(dir) {
+  const out = [];
+  async function walk(d) {
+    const ents = await fs.readdir(path.join(ROOT, d), { withFileTypes: true });
+    for (const ent of ents) {
+      const rel = path.join(d, ent.name);
+      if (ent.isDirectory()) await walk(rel);
+      else if (ent.name.endsWith(".sql")) out.push(rel);
+    }
+  }
+  await walk(dir);
+  return out;
+}
+
 async function verifyEntry(id, entry, source) {
   if (entry.file.startsWith("pseudo:")) return;
   if (!(await fileExists(entry.file))) {
     errors.push(`[${source}] ${id}: file not found -> ${entry.file}`);
     return;
   }
-  const content = await fs.readFile(path.join(ROOT, entry.file), "utf8");
   const symbols = parseAffected(entry.affected);
-  for (const sym of symbols) {
-    if (!content.includes(sym)) {
-      errors.push(`[${source}] ${id}: symbol "public.${sym}" not found in ${entry.file}`);
-    }
+  // Build search corpus: primary file + optional searchDir SQL files.
+  const corpusFiles = [entry.file];
+  if (entry.searchDir && (await fileExists(entry.searchDir))) {
+    const extra = await listSqlFiles(entry.searchDir);
+    for (const f of extra) if (!corpusFiles.includes(f)) corpusFiles.push(f);
   }
-  // For SQL migrations, require a definition for each symbol.
-  if (entry.file.endsWith(".sql")) {
-    for (const sym of symbols) {
-      const fnRe = new RegExp(`create\\s+(or\\s+replace\\s+)?function\\s+public\\.${sym}\\b`, "i");
-      const tblRe = new RegExp(`create\\s+table\\s+(if\\s+not\\s+exists\\s+)?public\\.${sym}\\b`, "i");
-      const viewRe = new RegExp(`create\\s+(or\\s+replace\\s+)?view\\s+public\\.${sym}\\b`, "i");
-      if (!fnRe.test(content) && !tblRe.test(content) && !viewRe.test(content)) {
-        errors.push(`[${source}] ${id}: no CREATE FUNCTION/TABLE/VIEW for public.${sym} in ${entry.file}`);
+  const contents = await Promise.all(corpusFiles.map((f) => fs.readFile(path.join(ROOT, f), "utf8").catch(() => "")));
+  const joined = contents.join("\n");
+
+  for (const sym of symbols) {
+    if (!joined.includes(sym)) {
+      errors.push(`[${source}] ${id}: symbol "public.${sym}" not found in ${entry.searchDir || entry.file}`);
+      continue;
+    }
+    // SQL definition check: must appear as CREATE FUNCTION/TABLE/VIEW somewhere in corpus.
+    if (entry.file.endsWith(".sql") || entry.searchDir) {
+      const fnRe = new RegExp(`create\\s+(or\\s+replace\\s+)?function\\s+(public\\.)?${sym}\\b`, "i");
+      const tblRe = new RegExp(`create\\s+table\\s+(if\\s+not\\s+exists\\s+)?(public\\.)?${sym}\\b`, "i");
+      const viewRe = new RegExp(`create\\s+(or\\s+replace\\s+)?view\\s+(public\\.)?${sym}\\b`, "i");
+      if (!fnRe.test(joined) && !tblRe.test(joined) && !viewRe.test(joined)) {
+        errors.push(`[${source}] ${id}: no CREATE FUNCTION/TABLE/VIEW for public.${sym} in ${entry.searchDir || entry.file}`);
       }
     }
   }
