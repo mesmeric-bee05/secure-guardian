@@ -13,6 +13,7 @@
 export const FIX_MAP = {
   SUPA_authenticated_security_definer_function_executable: {
     file: "supabase/migrations/20260510103858_bbd68668-925c-4856-a196-32e3556550c7.sql",
+    searchDir: "supabase/migrations",
     line: null,
     affected:
       "public.has_role, public.is_admin, public.is_chw, public.log_admin_action, public.admin_run_security_events_purge, public.security_events_summary, public.security_events_retention_status, public.security_top_ips",
