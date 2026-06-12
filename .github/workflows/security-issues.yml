@@ -1,0 +1,26 @@
+name: Security Issues Sync
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - security/snapshots/latest.json
+      - security/allowlist.json
+      - scripts/lib/findingMap.mjs
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - name: Sync GitHub issues for findings
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SEVERITY_THRESHOLD: ${{ vars.SECURITY_GATE_THRESHOLD || 'high' }}
+        run: node scripts/security-open-issues.mjs
