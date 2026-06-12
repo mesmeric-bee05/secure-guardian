@@ -88,7 +88,8 @@ try {
     const affected = cells[5];
     const file = cells[6];
     if (!id || file === "(see scanner link)") continue;
-    await verifyEntry(id, { file, affected, line: null }, "REMEDIATION.md");
+    const searchDir = FIX_MAP[id]?.searchDir;
+    await verifyEntry(id, { file, affected, line: null, searchDir }, "REMEDIATION.md");
   }
 } catch {
   // remediation file optional in early runs
