@@ -11,7 +11,11 @@
     "preview": "vite preview",
     "security:ingest": "node scripts/ingest-scans.mjs",
     "security:render": "node scripts/render-report.mjs",
-    "security:gate": "node scripts/security-gate.mjs"
+    "security:gate": "node scripts/security-gate.mjs",
+    "security:annotate": "node scripts/security-annotate.mjs",
+    "security:issues": "node scripts/security-open-issues.mjs",
+    "security:verify-links": "node scripts/security-verify-links.mjs",
+    "test:security-links": "node --test scripts/__tests__/security-links.test.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

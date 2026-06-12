@@ -1,0 +1,74 @@
+name: Security Nightly
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    env:
+      SEVERITY_THRESHOLD: ${{ vars.SECURITY_GATE_THRESHOLD || 'high' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - name: Secret scan
+        run: node scripts/scan-secrets.mjs
+      - name: Ingest scan results
+        run: |
+          INPUT="${SCAN_INPUT:-security/raw-scan.json}"
+          if [ -f "$INPUT" ]; then
+            node scripts/ingest-scans.mjs "$INPUT"
+          else
+            echo "No raw scan input at $INPUT; skipping ingest."
+          fi
+      - name: Render consolidated report
+        run: node scripts/render-report.mjs
+      - name: Verify remediation links
+        run: node scripts/security-verify-links.mjs
+      - name: Upload report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-nightly-${{ github.run_id }}
+          path: |
+            security/findings-report.md
+            security/REMEDIATION.md
+            security/snapshots/*.json
+          if-no-files-found: error
+      - name: Open PR with snapshot changes
+        if: github.event_name != 'pull_request'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "chore(security): nightly snapshot"
+          branch: chore/security-nightly
+          title: "chore(security): nightly snapshot"
+          body: |
+            Automated nightly security snapshot.
+            See artifact `security-nightly-${{ github.run_id }}` for the consolidated report.
+          add-paths: |
+            security/snapshots
+            security/findings-report.md
+            security/REMEDIATION.md
+          labels: security,automated
+
+  sync-issues:
+    needs: nightly
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - name: Sync GitHub issues
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SEVERITY_THRESHOLD: ${{ vars.SECURITY_GATE_THRESHOLD || 'high' }}
+        run: node scripts/security-open-issues.mjs

@@ -1,0 +1,19 @@
+name: Security Link Integrity
+on:
+  pull_request:
+    paths:
+      - supabase/migrations/**
+      - supabase/functions/**
+      - security/**
+      - scripts/lib/findingMap.mjs
+      - scripts/security-verify-links.mjs
+
+jobs:
+  verify-links:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - name: Verify remediation links
+        run: node --test scripts/__tests__/security-links.test.mjs
