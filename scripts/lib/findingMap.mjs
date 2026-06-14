@@ -16,8 +16,8 @@ export const FIX_MAP = {
     searchDir: "supabase/migrations",
     line: null,
     affected:
-      "public.has_role, public.is_admin, public.is_chw, public.log_admin_action, public.admin_run_security_events_purge, public.security_events_summary, public.security_events_retention_status, public.security_top_ips",
-    fix: "Accepted: RLS helpers need authenticated EXECUTE; admin RPCs gate via is_admin(auth.uid()).",
+      "public.has_role, public.is_admin, public.is_chw, public.log_admin_action, public.admin_run_security_events_purge, public.security_events_summary, public.security_events_retention_status, public.security_top_ips, public.verify_audit_chain, public.admin_verify_audit_chain",
+    fix: "Accepted: RLS helpers need authenticated EXECUTE; admin RPCs (including audit-chain verifier) gate via is_admin(auth.uid()).",
     owner: "platform-security",
   },
   SUPA_extension_in_public: {
