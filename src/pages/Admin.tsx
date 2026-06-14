@@ -15,8 +15,9 @@ import { Loader2 } from 'lucide-react';
 const ReportsPage = lazy(() => import('@/pages/Reports'));
 const AnalyticsDashboardTab = lazy(() => import('@/components/admin/AnalyticsDashboardTab'));
 const SecurityEventsTab = lazy(() => import('@/components/admin/SecurityEventsTab'));
+const BlockchainIntegrityTab = lazy(() => import('@/components/admin/BlockchainIntegrityTab'));
 
-type AdminTab = 'users' | 'facilities' | 'protocols' | 'audit' | 'chw' | 'sms' | 'reports' | 'analytics' | 'security';
+type AdminTab = 'users' | 'facilities' | 'protocols' | 'audit' | 'chw' | 'sms' | 'reports' | 'analytics' | 'security' | 'integrity';
 
 export default function Admin() {
   const navigate = useNavigate();
@@ -52,6 +53,12 @@ export default function Admin() {
         return (
           <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>}>
             <SecurityEventsTab />
+          </Suspense>
+        );
+      case 'integrity':
+        return (
+          <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>}>
+            <BlockchainIntegrityTab />
           </Suspense>
         );
       default:
