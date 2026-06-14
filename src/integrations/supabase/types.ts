@@ -17,30 +17,39 @@ export type Database = {
       audit_logs: {
         Row: {
           action: string
+          chain_index: number | null
           created_at: string | null
           details: Json | null
+          entry_hash: string | null
           id: string
           ip_address: string | null
+          prev_hash: string | null
           resource_id: string | null
           resource_type: string | null
           user_id: string | null
         }
         Insert: {
           action: string
+          chain_index?: number | null
           created_at?: string | null
           details?: Json | null
+          entry_hash?: string | null
           id?: string
           ip_address?: string | null
+          prev_hash?: string | null
           resource_id?: string | null
           resource_type?: string | null
           user_id?: string | null
         }
         Update: {
           action?: string
+          chain_index?: number | null
           created_at?: string | null
           details?: Json | null
+          entry_hash?: string | null
           id?: string
           ip_address?: string | null
+          prev_hash?: string | null
           resource_id?: string | null
           resource_type?: string | null
           user_id?: string | null
@@ -637,6 +646,14 @@ export type Database = {
         Args: { _older_than?: string }
         Returns: Json
       }
+      admin_verify_audit_chain: {
+        Args: { _from?: number; _to?: number }
+        Returns: Json
+      }
+      audit_logs_canonical_json: {
+        Args: { _row: Database["public"]["Tables"]["audit_logs"]["Row"] }
+        Returns: string
+      }
       calculate_distance_km: {
         Args: { lat1: number; lat2: number; lng1: number; lng2: number }
         Returns: number
@@ -707,6 +724,14 @@ export type Database = {
           rate_limit_hits: number
           total: number
           validation_failures: number
+        }[]
+      }
+      verify_audit_chain: {
+        Args: { _from?: number; _to?: number }
+        Returns: {
+          broken_at: number
+          ok: boolean
+          total: number
         }[]
       }
     }
