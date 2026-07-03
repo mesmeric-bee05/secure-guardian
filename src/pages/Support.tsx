@@ -232,7 +232,7 @@ export default function Support() {
 
             <Button
               onClick={submit}
-              disabled={loading || amount < 10 || phone.length !== 12}
+              disabled={loading || amount < 10 || phone.length !== 12 || ready === false}
               className="w-full"
               size="lg"
             >
