@@ -270,6 +270,29 @@ For emergencies, your profile helps responders.`
 Kusasisha wasifu wako, tumia programu ya MediReach+ au tuma SMS kwa nambari yetu.
 
 Kwa dharura, wasifu wako husaidia wahudumu.`;
+    } else if (inputs[0] === '5') {
+      if (inputs.length === 1) {
+        response = language === 'en'
+          ? `CON Donate via M-PESA
+Enter amount in KES (10-70000):`
+          : `CON Changia kwa M-PESA
+Weka kiasi cha KSh (10-70000):`;
+      } else {
+        const amt = parseInt(lastInput, 10);
+        if (!Number.isFinite(amt) || amt < 10 || amt > 70000) {
+          response = language === 'en'
+            ? `END Invalid amount. Please dial back and enter 10-70000.`
+            : `END Kiasi si sahihi. Piga tena na uweke 10-70000.`;
+        } else {
+          response = language === 'en'
+            ? `END Thank you! To complete your KES ${amt} donation, dial *334# or open MediReach+ app > Support.
+
+Your generosity keeps emergency care free.`
+            : `END Asante! Kukamilisha mchango wako wa KSh ${amt}, piga *334# au fungua programu ya MediReach+ > Saidia.
+
+Ukarimu wako huweka huduma ya dharura bure.`;
+        }
+      }
     } else {
       response = MENUS.main[language];
     }
