@@ -38,7 +38,7 @@ export default function CHWAnalyticsTab() {
       const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
       const { data: caseData, error } = await supabase
         .from('emergency_cases')
-        .select('id, assigned_chw_id, status, priority, created_at, resolved_at, region')
+        .select('id, assigned_chw_id, status, priority, created_at, resolved_at, location_address')
         .not('assigned_chw_id', 'is', null)
         .gte('created_at', since)
         .order('created_at', { ascending: false })
