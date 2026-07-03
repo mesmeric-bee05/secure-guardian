@@ -82,6 +82,17 @@ const QuickActions = ({ language, isAuthenticated, isChw, isAdmin }: QuickAction
       requiresAuth: true,
       requiresAdmin: true,
     },
+    {
+      id: 'support',
+      icon: Heart,
+      titleEn: 'Support via M-PESA',
+      titleSw: 'Changia kwa M-PESA',
+      descEn: 'Donate to keep this platform free',
+      descSw: 'Changia ili huduma hii ibaki bure',
+      color: 'bg-pink-500',
+      path: '/support',
+      requiresAuth: false,
+    },
   ];
 
   const visibleActions = actions.filter(action => {
