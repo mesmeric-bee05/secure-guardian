@@ -118,7 +118,7 @@ export default function Support() {
               {l.title}
             </h1>
           </div>
-          <LanguageToggle value={lang} onChange={setLang} />
+          <LanguageToggle language={lang} onToggle={setLang} />
         </div>
       </header>
 
