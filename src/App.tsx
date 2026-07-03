@@ -54,6 +54,7 @@ const AppContent = () => {
           <Route path="/dashboard" element={<ProtectedRoute requiredRoles={['chw', 'admin']}><Dashboard /></ProtectedRoute>} />
           <Route path="/admin" element={<ProtectedRoute requiredRoles={['admin']}><Admin /></ProtectedRoute>} />
           <Route path="/reports" element={<ProtectedRoute requiredRoles={['chw', 'admin']}><Reports /></ProtectedRoute>} />
+          <Route path="/support" element={<Support />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
