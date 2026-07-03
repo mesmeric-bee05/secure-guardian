@@ -16,7 +16,7 @@ type Case = {
   priority: string | null;
   created_at: string;
   resolved_at?: string | null;
-  region?: string | null;
+  location_address?: string | null;
 };
 
 const STATUS_COLORS: Record<string, string> = {
