@@ -5,6 +5,7 @@ import {
   User, 
   LayoutDashboard,
   Shield,
+  Heart,
   ChevronRight 
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
