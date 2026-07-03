@@ -1,7 +1,7 @@
-import { Users, Building2, FileText, ClipboardList, Shield, UserCog, MessageSquare, BarChart3, Activity, ShieldAlert, Link2, LineChart } from 'lucide-react';
+import { Users, Building2, FileText, ClipboardList, Shield, UserCog, MessageSquare, BarChart3, Activity, ShieldAlert, Link2, LineChart, Smartphone } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-type AdminTab = 'users' | 'facilities' | 'protocols' | 'audit' | 'chw' | 'chwAnalytics' | 'sms' | 'reports' | 'analytics' | 'security' | 'integrity';
+type AdminTab = 'users' | 'facilities' | 'protocols' | 'audit' | 'chw' | 'chwAnalytics' | 'sms' | 'reports' | 'analytics' | 'security' | 'integrity' | 'mpesa';
 
 interface AdminSidebarProps {
   activeTab: AdminTab;
