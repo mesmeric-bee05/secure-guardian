@@ -30,6 +30,12 @@ export default function Admin() {
         return <UsersTab />;
       case 'chw':
         return <CHWManagementTab />;
+      case 'chwAnalytics':
+        return (
+          <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>}>
+            <CHWAnalyticsTab />
+          </Suspense>
+        );
       case 'facilities':
         return <FacilitiesTab />;
       case 'protocols':
