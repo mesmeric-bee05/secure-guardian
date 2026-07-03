@@ -20,6 +20,7 @@ const navItems = [
   { id: 'security' as const, label: 'Security Events', icon: ShieldAlert },
   { id: 'reports' as const, label: 'Reports', icon: BarChart3 },
   { id: 'analytics' as const, label: 'Analytics', icon: Activity },
+  { id: 'mpesa' as const, label: 'M-PESA Config', icon: Smartphone },
 ];
 
 export function AdminSidebar({ activeTab, onTabChange }: AdminSidebarProps) {
