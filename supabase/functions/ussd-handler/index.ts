@@ -27,12 +27,14 @@ const MENUS = {
 2. Find Nearest Hospital
 3. Emergency Alert
 4. My Health Profile
+5. Donate via M-PESA
 0. Change Language`,
     sw: `CON Karibu MediReach+
 1. Msaada wa Huduma ya Kwanza
 2. Tafuta Hospitali ya Karibu
 3. Tahadhari ya Dharura
 4. Wasifu Wangu wa Afya
+5. Changia kwa M-PESA
 0. Badilisha Lugha`,
   },
   firstAid: {
