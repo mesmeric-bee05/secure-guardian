@@ -69,6 +69,12 @@ export default function Admin() {
             <BlockchainIntegrityTab />
           </Suspense>
         );
+      case 'mpesa':
+        return (
+          <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>}>
+            <MpesaConfigTab />
+          </Suspense>
+        );
       default:
         return <UsersTab />;
     }
