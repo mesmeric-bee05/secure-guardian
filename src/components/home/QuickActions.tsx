@@ -5,6 +5,7 @@ import {
   User, 
   LayoutDashboard,
   Shield,
+  Heart,
   ChevronRight 
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -80,6 +81,17 @@ const QuickActions = ({ language, isAuthenticated, isChw, isAdmin }: QuickAction
       path: '/admin',
       requiresAuth: true,
       requiresAdmin: true,
+    },
+    {
+      id: 'support',
+      icon: Heart,
+      titleEn: 'Support via M-PESA',
+      titleSw: 'Changia kwa M-PESA',
+      descEn: 'Donate to keep this platform free',
+      descSw: 'Changia ili huduma hii ibaki bure',
+      color: 'bg-pink-500',
+      path: '/support',
+      requiresAuth: false,
     },
   ];
 

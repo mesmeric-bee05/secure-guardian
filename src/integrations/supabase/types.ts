@@ -154,6 +154,48 @@ export type Database = {
         }
         Relationships: []
       }
+      donations: {
+        Row: {
+          amount_kes: number
+          checkout_request_id: string | null
+          created_at: string
+          id: string
+          merchant_request_id: string | null
+          mpesa_receipt: string | null
+          phone_msisdn: string
+          result_desc: string | null
+          status: string
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          amount_kes: number
+          checkout_request_id?: string | null
+          created_at?: string
+          id?: string
+          merchant_request_id?: string | null
+          mpesa_receipt?: string | null
+          phone_msisdn: string
+          result_desc?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          amount_kes?: number
+          checkout_request_id?: string | null
+          created_at?: string
+          id?: string
+          merchant_request_id?: string | null
+          mpesa_receipt?: string | null
+          phone_msisdn?: string
+          result_desc?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       emergency_cases: {
         Row: {
           assigned_chw_id: string | null
@@ -612,6 +654,7 @@ export type Database = {
           created_at: string | null
           current_menu: string | null
           id: string
+          menu_path: string | null
           phone_number: string
           session_data: Json | null
           session_id: string
@@ -621,6 +664,7 @@ export type Database = {
           created_at?: string | null
           current_menu?: string | null
           id?: string
+          menu_path?: string | null
           phone_number: string
           session_data?: Json | null
           session_id: string
@@ -630,6 +674,7 @@ export type Database = {
           created_at?: string | null
           current_menu?: string | null
           id?: string
+          menu_path?: string | null
           phone_number?: string
           session_data?: Json | null
           session_id?: string
