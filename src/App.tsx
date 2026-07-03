@@ -17,6 +17,7 @@ import Profile from "./pages/Profile";
 import Dashboard from "./pages/Dashboard";
 import Admin from "./pages/Admin";
 import Reports from "./pages/Reports";
+import Support from "./pages/Support";
 import NotFound from "./pages/NotFound";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 
