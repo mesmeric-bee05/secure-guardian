@@ -17,8 +17,9 @@ const AnalyticsDashboardTab = lazy(() => import('@/components/admin/AnalyticsDas
 const SecurityEventsTab = lazy(() => import('@/components/admin/SecurityEventsTab'));
 const BlockchainIntegrityTab = lazy(() => import('@/components/admin/BlockchainIntegrityTab'));
 const CHWAnalyticsTab = lazy(() => import('@/components/admin/CHWAnalyticsTab'));
+const MpesaConfigTab = lazy(() => import('@/components/admin/MpesaConfigTab'));
 
-type AdminTab = 'users' | 'facilities' | 'protocols' | 'audit' | 'chw' | 'chwAnalytics' | 'sms' | 'reports' | 'analytics' | 'security' | 'integrity';
+type AdminTab = 'users' | 'facilities' | 'protocols' | 'audit' | 'chw' | 'chwAnalytics' | 'sms' | 'reports' | 'analytics' | 'security' | 'integrity' | 'mpesa';
 
 export default function Admin() {
   const navigate = useNavigate();
@@ -66,6 +67,12 @@ export default function Admin() {
         return (
           <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>}>
             <BlockchainIntegrityTab />
+          </Suspense>
+        );
+      case 'mpesa':
+        return (
+          <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>}>
+            <MpesaConfigTab />
           </Suspense>
         );
       default:

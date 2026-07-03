@@ -1,7 +1,7 @@
-import { Users, Building2, FileText, ClipboardList, Shield, UserCog, MessageSquare, BarChart3, Activity, ShieldAlert, Link2, LineChart } from 'lucide-react';
+import { Users, Building2, FileText, ClipboardList, Shield, UserCog, MessageSquare, BarChart3, Activity, ShieldAlert, Link2, LineChart, Smartphone } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-type AdminTab = 'users' | 'facilities' | 'protocols' | 'audit' | 'chw' | 'chwAnalytics' | 'sms' | 'reports' | 'analytics' | 'security' | 'integrity';
+type AdminTab = 'users' | 'facilities' | 'protocols' | 'audit' | 'chw' | 'chwAnalytics' | 'sms' | 'reports' | 'analytics' | 'security' | 'integrity' | 'mpesa';
 
 interface AdminSidebarProps {
   activeTab: AdminTab;
@@ -20,6 +20,7 @@ const navItems = [
   { id: 'security' as const, label: 'Security Events', icon: ShieldAlert },
   { id: 'reports' as const, label: 'Reports', icon: BarChart3 },
   { id: 'analytics' as const, label: 'Analytics', icon: Activity },
+  { id: 'mpesa' as const, label: 'M-PESA Config', icon: Smartphone },
 ];
 
 export function AdminSidebar({ activeTab, onTabChange }: AdminSidebarProps) {

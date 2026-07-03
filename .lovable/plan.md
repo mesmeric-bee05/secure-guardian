@@ -1,110 +1,92 @@
-## Goal
-Close the remaining gaps between the MediReach+ report and the running app, fix the broken items you flagged, and do a focused hardening pass — without churning parts of the app that already work.
+# Phase 6 — M-PESA Hardening, USSD Resilience, QA & SEO
 
-The three big features to add (from your selection): **M-PESA donation/support flow**, **richer USSD menu tree**, **CHW case analytics dashboard**. Plus a targeted bug + security sweep.
+## 1. M-PESA Configuration Checklist & Validation Screen
 
----
+**New Edge Function** `mpesa-config-check` (verify_jwt=false, admin-only via JWT check in code):
+- Reads env vars: `MPESA_CONSUMER_KEY`, `MPESA_CONSUMER_SECRET`, `MPESA_SHORTCODE`, `MPESA_PASSKEY`, `MPESA_CALLBACK_URL`, `MPESA_ENV`.
+- Returns per-var `{ set: bool, valid: bool, hint }` — never leaks values (only length + last 4).
+- Optional live probe: request a Daraja OAuth token (`/oauth/v1/generate?grant_type=client_credentials`) using key/secret; report `auth_ok`, `token_expires_in`.
+- Validates: shortcode is 5-7 digits, callback URL is https, env ∈ {sandbox, production}, passkey length ≥ 40.
 
-## 1. Fix broken protocol videos (bug sweep — quick win)
+**New Admin Tab** `MpesaConfigTab.tsx` under Admin sidebar → "Payments":
+- Bilingual (EN/SW) checklist card, one row per secret with ✓/✗ badge, hint, and "Recheck" button.
+- "Test STK Push" section: input phone + KES 1, calls `mpesa-stk-push` in sandbox and shows raw response.
+- Big status banner: "Demo mode" (any missing) vs "Live ready".
+- Route wired via `AdminSidebar` + `Admin.tsx`.
 
-Symptom: some First-Aid Protocols show a broken/blank video area.
+**Frontend gating**: `src/pages/Support.tsx` calls `mpesa-config-check` on mount; if not ready, disables donation button and shows bilingual "Donations temporarily unavailable" notice instead of failing at STK time.
 
-Root cause: `ProtocolVideoResource` only renders a YouTube thumbnail + "open in new tab" fallback (no inline player), and several `video_url` values in `first_aid_protocols` are duplicates / occasionally geo-blocked or removed. Component fails silently when thumbnail 404s.
+## 2. Automated Integration Tests
 
-Fixes:
-- Replace the thumbnail-only view with an actual embedded YouTube `<iframe>` (privacy-enhanced `youtube-nocookie.com/embed/...`) with lazy loading and a graceful fallback card when the URL isn't a YouTube URL or when the iframe fails to load (`onError` → fallback).
-- Add a small `onError` handler on the thumbnail image so a missing thumbnail no longer leaves an empty box.
-- Data pass: re-check all `first_aid_protocols.video_url` rows; replace confirmed-dead/duplicated URLs with vetted Red Cross / St John Ambulance Kenya-relevant videos (curated list, EN + SW captions where available).
-- Add bilingual "Video unavailable — open training guide" copy.
+**Deno tests** (`supabase/functions/*/index.test.ts`) using dotenv skill for `VITE_SUPABASE_URL` + `VITE_SUPABASE_PUBLISHABLE_KEY`:
 
-## 2. M-PESA donation / support flow (report-gap feature)
+- `mpesa-stk-push/index.test.ts`
+  - `auth token generation`: mocks Daraja OAuth via `MPESA_ENV=sandbox` → asserts base64 header + 200.
+  - `validation failures`: bad phone/amount → 400 with Zod errors.
+  - `rate limit`: 6 rapid calls → 6th returns 429.
+  - `production mode guard`: with `MPESA_ENV=production` and missing secrets → 503 with config error.
+- `mpesa-callback/index.test.ts`
+  - `success callback` (ResultCode=0): asserts `donations` row updates to `status='completed'`, receipt stored.
+  - `failure callback` (ResultCode≠0): status='failed', failure_reason stored.
+  - `unknown checkout_request_id`: returns 200 (Safaricom requires ack) but no DB write.
+  - `malformed payload`: 400, no partial update.
 
-Report explicitly frames MediReach+ around the Kenyan M-PESA ecosystem. Add a lightweight **donation / community-support** flow (not a paywall — the app stays free for emergencies).
+Skill note: uses `import "https://deno.land/std@0.224.0/dotenv/load.ts"` and consumes every response body per edge-function-testing rules.
 
-- New page `/support` with a bilingual donation card: preset amounts (KES 100 / 500 / 1,000 / custom), phone number entry (defaults from profile), "Donate via M-PESA" button.
-- Edge function `mpesa-stk-push` (verify_jwt=false, auth-check inline) that:
-  - Validates input (Zod: phone `2547XXXXXXXX`, amount 10–70,000).
-  - Uses **Safaricom Daraja sandbox** by default. Reads `MPESA_CONSUMER_KEY`, `MPESA_CONSUMER_SECRET`, `MPESA_SHORTCODE`, `MPESA_PASSKEY`, `MPESA_CALLBACK_URL`, `MPESA_ENV` (`sandbox`|`production`) via `add_secret`. If secrets are missing the endpoint returns a friendly "M-PESA not configured yet — contact admin" message so the UI still works in demo mode.
-  - Gets OAuth token → issues STK Push → returns `CheckoutRequestID`.
-  - Rate-limited (5/min per IP) via existing `enforceLimits`.
-- Edge function `mpesa-callback` (verify_jwt=false, public) that receives Safaricom's async result and writes to a new `donations` table.
-- New table `public.donations` (amount, phone_msisdn hashed, status, checkout_request_id, receipt, user_id nullable, created_at, updated_at) with RLS: users see own donations; admins see all; service_role full. GRANTs per project rules.
-- Admin: small "Donations" card in existing `AnalyticsDashboardTab` (total raised, last 30 days chart) — no new admin tab.
-- Copy: bilingual EN/SW throughout, disclaimer that donations support platform operations, not medical services.
+## 3. USSD Hardening — Donate + Nearest Clinic
 
-## 3. Richer USSD menu tree (report-gap feature)
+In `supabase/functions/ussd-handler/index.ts`:
+- Add Zod schemas for the two new branches; `text` split validated (only digits `*`-separated, max depth 6).
+- **Donate branch (5)**: validate KES amount ∈ [10, 70000]; validate phone regex `^2547\d{8}$`; on invalid → `END Invalid amount / Kiasi si sahihi`.
+- **Nearest Clinic branch**: validate county code against enum; empty results → friendly `END No clinic found nearby`.
+- Wrap downstream `mpesa-stk-push` invoke + Supabase queries in try/catch:
+  - Non-2xx from STK → `END Service busy, please retry (Huduma ina shughuli)`.
+  - 429 → same message + logged as `ussd_rate_limited`.
+  - 5xx → `END Temporary error, try later`.
+- **Denial logging**: every rejected request (validation, 429, 5xx) inserts into `security_events` (`event_type='ussd_denied'`, scope=`donate|clinic`, details incl. reason, session id, msisdn hash — never raw phone).
+- Add unit-style test file `ussd-handler/index.test.ts` covering each denial path.
 
-Current `ussd-handler` is minimal. Expand to the full flow the report describes so offline users have a real path.
+## 4. Smoke Test — /support + CHW Analytics Admin
 
-Menu structure (rendered in EN or SW based on session language choice at step 1):
+Playwright script under `/tmp/browser/phase6/`:
+- Auth via injected Supabase session.
+- **/support**: visit → screenshot; click each donation preset (100/500/1000/custom); assert loading spinner on submit; assert disabled state in demo mode; check console + network for 4xx/5xx; language toggle EN↔SW.
+- **/admin → CHW Analytics**: visit → screenshot; verify charts render (non-empty SVG); click **Export CSV** → assert download triggered + CSV parses with expected headers; date-range filter round-trip; empty-state render when no cases.
 
-```
-CON Karibu MediReach+ / Welcome
-1. English
-2. Kiswahili
-  → 1. Emergency (SOS)              → trigger emergency_alert flow, ask location county
-    → 2. First Aid Guide             → list top 6 protocols, then step-by-step summary
-    → 3. Find Nearest Clinic         → county → returns 3 closest facilities
-    → 4. Ask Health Question         → prompts short text, calls ai-chat (offline-safe summary)
-    → 5. Register / Update Profile   → name + county + one emergency contact
-    → 6. Donate via M-PESA           → prompts amount, triggers STK push
-    → 0. Exit
-```
+Fix anything the sweep surfaces: missing loading states, broken CSV MIME, unbound onClick, missing empty states, unhandled promise rejections.
 
-- Persist state across USSD hops in existing `ussd_sessions` (add `menu_path text` column).
-- All responses ≤ 182 chars per Africa's Talking limit; long protocol content paginated with "0. Back / 00. More".
-- E2E tests for each branch under `supabase/functions/ussd-handler/*.e2e.test.ts`.
+## 5. SEO for /support (EN + SW)
 
-## 4. CHW case analytics dashboard (report-gap feature)
+- Install `react-helmet-async` (if not already) and wrap root in `HelmetProvider`.
+- `Support.tsx` renders `<Helmet>` with:
+  - `<title>` — locale-aware ("Support MediReach+ — Donate via M-PESA" / "Saidia MediReach+ — Changia kupitia M-PESA").
+  - `<meta name="description">` per locale (<160 chars).
+  - `<link rel="canonical" href="https://fortify-trust-wall.lovable.app/support">`.
+  - OpenGraph: `og:title`, `og:description`, `og:type=website`, `og:url`, `og:locale` = `en_KE` / `sw_KE`, plus `og:locale:alternate`.
+  - Twitter card: `summary_large_image`.
+  - `<link rel="alternate" hreflang="en">` + `hreflang="sw"` + `x-default` (query param `?lang=`).
+  - JSON-LD `DonateAction` on `NGOHealthOrganization` (name, url, sameAs, potentialAction).
+- Update `scripts/generate-sitemap.ts` `entries` to include `/support` with `changefreq: monthly`, `priority: 0.8`.
+- Verify via `seo_chat--trigger_scan` after deploy and mark findings fixed.
 
-Extend the existing `CHWManagementTab` (or add a sub-tab within it) with case analytics for CHW-owned cases:
+## Technical Details
 
-- KPI cards: assigned cases, resolved this week, avg response time, active CHWs.
-- Charts (Recharts, reuse existing `CaseTrendsChart`, `ResponseTimeChart`, `StatusOverviewChart` where possible):
-  - Cases per CHW (bar).
-  - Cases by county heat table.
-  - Response-time distribution.
-- CSV export of CHW-owned cases (reuse `CSVExportButton` pattern; server-side via `reports-export` edge function with a new `scope=chw_cases` param).
-- Date-range filter (reuse `DateRangeFilter`).
+- Secrets referenced only server-side; `mpesa-config-check` returns booleans, never values.
+- All new tables/columns: none required (reuse `donations`, `security_events`, `ussd_sessions`).
+- All new Edge Functions get CORS via `npm:@supabase/supabase-js@2/cors`.
+- Rate limits use existing `consume_rate_limit` RPC (`mpesa_stk:{uid|ip}` cap 5/min).
+- No design changes; reuse existing tokens and shadcn components.
 
-Data comes from existing `emergency_cases` + `chw_assignments` tables — no schema change beyond an index on `emergency_cases(assigned_chw_id, created_at)` if the query planner needs it.
+## Verification Checklist
 
-## 5. Bug + button sweep
+- Admin → Payments tab shows 6 green checks with valid secrets, red X with hints otherwise.
+- `deno test` green for both mpesa functions.
+- USSD simulator: invalid amount, 429, and 5xx paths each return proper `END …` message and log a `security_events` row.
+- Playwright smoke: 0 console errors on /support and /admin CHW Analytics; CSV downloads and parses.
+- `curl -I` on /support shows correct title/description; social debugger renders JSON-LD; sitemap.xml contains /support.
 
-Walk every route (`/`, `/emergency`, `/chat`, `/dashboard`, `/onboarding/*`, `/profile`, `/reports`, `/admin`, `/auth`) via Playwright, take screenshots, and enumerate:
+## Out of Scope
 
-- Buttons with no `onClick`, no route, or navigating to a stale path.
-- Any console errors in normal flows (I'll capture and log; fix each root-cause, not the surface).
-- Bilingual gaps: any hard-coded English strings that bypass `translations.ts`.
-
-Only genuine defects get fixed — no cosmetic rewrites.
-
-## 6. Security hardening (targeted, minimal)
-
-- Add `verify_jwt = false` config entries in `supabase/config.toml` for the two new functions (project convention — auth-checked in code).
-- Run `supabase--linter` after migration; fix anything new.
-- Ensure `donations` RLS is airtight (users cannot see others' phone/receipt).
-- Re-run `npm run security:render && npm run security:verify-links` and update `findingMap.mjs` for the new SECURITY DEFINER helpers (if any).
-
-## 7. Out of scope
-- No Stripe/Paddle. M-PESA only (per report).
-- No web3/on-chain blockchain — the SHA-256 audit hash chain already ships.
-- No redesign, no new fonts/colors, no onboarding step count change.
-- No changes to auth providers.
-
----
-
-## Verification checklist
-- Every protocol card in `/` opens the modal and shows either a playing embed or a clean fallback.
-- STK push against sandbox returns `ResponseCode=0`; callback writes a `donations` row; `/support` shows success toast in EN + SW.
-- USSD simulator (Africa's Talking) walks all 6 branches without dead-ends; SMS-quality responses.
-- CHW analytics tab renders charts + CSV downloads a non-empty file when data exists.
-- Playwright sweep: 0 console errors, 0 dead buttons on the tracked routes.
-- `npm run security:render && node scripts/security-verify-links.mjs && node --test scripts/__tests__/security-links.test.mjs` all green.
-- `supabase--linter` clean.
-
-## Technical notes
-- **Secrets I'll request via `add_secret`**: `MPESA_CONSUMER_KEY`, `MPESA_CONSUMER_SECRET`, `MPESA_SHORTCODE`, `MPESA_PASSKEY`, `MPESA_CALLBACK_URL`, `MPESA_ENV`. If you skip them, `/support` renders in "demo mode" and the button explains M-PESA isn't wired yet — nothing breaks.
-- **New tables**: `donations` only. All other work reuses existing tables.
-- **New edge functions**: `mpesa-stk-push`, `mpesa-callback`. Existing `ussd-handler`, `reports-export`, `ai-chat` get extended, not replaced.
-- **New UI**: `/support` page + `src/components/support/DonationCard.tsx`; CHW analytics extends existing tab; no new admin tab.
+- No new payment providers (Stripe/Paddle).
+- No schema migrations (donations table already covers this).
+- No visual redesign of /support or Admin.

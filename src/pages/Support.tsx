@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Heart, Loader2, Smartphone, ShieldCheck } from 'lucide-react';
+import { Helmet } from 'react-helmet-async';
+import { ArrowLeft, Heart, Loader2, Smartphone, ShieldCheck, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -62,7 +63,29 @@ export default function Support() {
     (profile?.phone_number || '').replace(/^\+?/, '').replace(/\D/g, ''),
   );
   const [loading, setLoading] = useState(false);
+  const [ready, setReady] = useState<boolean | null>(null);
   const l = t[lang];
+
+  useEffect(() => {
+    supabase.functions
+      .invoke('mpesa-config-check')
+      .then(({ data }) => setReady(Boolean((data as { ready?: boolean } | null)?.ready)))
+      .catch(() => setReady(false));
+  }, []);
+
+  const seo = {
+    en: {
+      title: 'Support MediReach+ — Donate via M-PESA',
+      description:
+        'Donate to MediReach+ via M-PESA and help keep bilingual AI first aid, offline protocols, and USSD emergency alerts free across Kenya.',
+    },
+    sw: {
+      title: 'Saidia MediReach+ — Changia kupitia M-PESA',
+      description:
+        'Changia MediReach+ kupitia M-PESA na usaidie kuweka huduma za kwanza za AI, itifaki za nje ya mtandao, na tahadhari za USSD bila malipo Kenya.',
+    },
+  }[lang];
+  const canonical = 'https://fortify-trust-wall.lovable.app/support';
 
   const submit = async () => {
     if (!user) {
@@ -107,6 +130,37 @@ export default function Support() {
 
   return (
     <div className="min-h-screen bg-background">
+      <Helmet>
+        <html lang={lang === 'sw' ? 'sw' : 'en'} />
+        <title>{seo.title}</title>
+        <meta name="description" content={seo.description} />
+        <link rel="canonical" href={canonical} />
+        <link rel="alternate" hrefLang="en" href={`${canonical}?lang=en`} />
+        <link rel="alternate" hrefLang="sw" href={`${canonical}?lang=sw`} />
+        <link rel="alternate" hrefLang="x-default" href={canonical} />
+        <meta property="og:title" content={seo.title} />
+        <meta property="og:description" content={seo.description} />
+        <meta property="og:url" content={canonical} />
+        <meta property="og:type" content="website" />
+        <meta property="og:locale" content={lang === 'sw' ? 'sw_KE' : 'en_KE'} />
+        <meta property="og:locale:alternate" content={lang === 'sw' ? 'en_KE' : 'sw_KE'} />
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:title" content={seo.title} />
+        <meta name="twitter:description" content={seo.description} />
+        <script type="application/ld+json">{JSON.stringify({
+          '@context': 'https://schema.org',
+          '@type': 'NGO',
+          name: 'MediReach+',
+          url: canonical,
+          description: seo.description,
+          potentialAction: {
+            '@type': 'DonateAction',
+            name: lang === 'sw' ? 'Changia kupitia M-PESA' : 'Donate via M-PESA',
+            target: canonical,
+            priceCurrency: 'KES',
+          },
+        })}</script>
+      </Helmet>
       <header className="sticky top-0 z-40 border-b border-border bg-card/95 backdrop-blur">
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-2">
@@ -124,6 +178,15 @@ export default function Support() {
 
       <main className="max-w-xl mx-auto p-4 space-y-4">
         <p className="text-muted-foreground text-sm">{l.subtitle}</p>
+
+        {ready === false && (
+          <div className="flex items-start gap-2 rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
+            <AlertCircle className="w-4 h-4 mt-0.5 text-amber-600 shrink-0" />
+            <p>{l.notConfigured}</p>
+          </div>
+        )}
+
+
 
         <Card>
           <CardHeader>
@@ -169,7 +232,7 @@ export default function Support() {
 
             <Button
               onClick={submit}
-              disabled={loading || amount < 10 || phone.length !== 12}
+              disabled={loading || amount < 10 || phone.length !== 12 || ready === false}
               className="w-full"
               size="lg"
             >
