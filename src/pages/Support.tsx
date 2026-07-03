@@ -63,7 +63,29 @@ export default function Support() {
     (profile?.phone_number || '').replace(/^\+?/, '').replace(/\D/g, ''),
   );
   const [loading, setLoading] = useState(false);
+  const [ready, setReady] = useState<boolean | null>(null);
   const l = t[lang];
+
+  useEffect(() => {
+    supabase.functions
+      .invoke('mpesa-config-check')
+      .then(({ data }) => setReady(Boolean((data as { ready?: boolean } | null)?.ready)))
+      .catch(() => setReady(false));
+  }, []);
+
+  const seo = {
+    en: {
+      title: 'Support MediReach+ — Donate via M-PESA',
+      description:
+        'Donate to MediReach+ via M-PESA and help keep bilingual AI first aid, offline protocols, and USSD emergency alerts free across Kenya.',
+    },
+    sw: {
+      title: 'Saidia MediReach+ — Changia kupitia M-PESA',
+      description:
+        'Changia MediReach+ kupitia M-PESA na usaidie kuweka huduma za kwanza za AI, itifaki za nje ya mtandao, na tahadhari za USSD bila malipo Kenya.',
+    },
+  }[lang];
+  const canonical = 'https://fortify-trust-wall.lovable.app/support';
 
   const submit = async () => {
     if (!user) {
