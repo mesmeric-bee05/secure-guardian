@@ -107,7 +107,9 @@ export default function CHWAnalyticsTab() {
   const byRegion = useMemo(() => {
     const map: Record<string, number> = {};
     cases.forEach((c) => {
-      const k = c.region || 'Unknown';
+      // Best-effort county extraction from the address string
+      const addr = (c.location_address || '').trim();
+      const k = addr ? addr.split(',')[0].slice(0, 40) : 'Unknown';
       map[k] = (map[k] ?? 0) + 1;
     });
     return Object.entries(map)
@@ -117,7 +119,7 @@ export default function CHWAnalyticsTab() {
   }, [cases]);
 
   const downloadCsv = () => {
-    const header = 'case_id,chw_id,chw_name,status,priority,region,created_at,resolved_at\n';
+    const header = 'case_id,chw_id,chw_name,status,priority,location,created_at,resolved_at\n';
     const rows = cases
       .map((c) =>
         [
@@ -126,7 +128,7 @@ export default function CHWAnalyticsTab() {
           (chwNames[c.assigned_chw_id ?? ''] ?? '').replace(/,/g, ' '),
           c.status ?? '',
           c.priority ?? '',
-          (c.region ?? '').replace(/,/g, ' '),
+          (c.location_address ?? '').replace(/,/g, ' '),
           c.created_at,
           c.resolved_at ?? '',
         ].join(','),
