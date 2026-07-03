@@ -11,6 +11,7 @@ interface AdminSidebarProps {
 const navItems = [
   { id: 'users' as const, label: 'User Management', icon: Users },
   { id: 'chw' as const, label: 'CHW Management', icon: UserCog },
+  { id: 'chwAnalytics' as const, label: 'CHW Analytics', icon: LineChart },
   { id: 'facilities' as const, label: 'Facilities', icon: Building2 },
   { id: 'protocols' as const, label: 'First Aid Protocols', icon: FileText },
   { id: 'sms' as const, label: 'SMS Dashboard', icon: MessageSquare },
