@@ -312,12 +312,31 @@ Enter amount in KES (10-70000):`
           : `CON Changia kwa M-PESA
 Weka kiasi cha KSh (10-70000):`;
       } else {
-        const amt = parseInt(lastInput, 10);
-        if (!Number.isFinite(amt) || amt < 10 || amt > 70000) {
+        const donateLimited = await enforceLimits({
+          scope: 'ussd-donate', ip: maskPhone(phoneNumber), ipLimitPerMin: 10, corsHeaders,
+        });
+        if (donateLimited) {
+          return new Response(
+            language === 'en'
+              ? 'END Too many donation attempts. Please try again in a minute.'
+              : 'END Majaribio mengi ya mchango. Tafadhali jaribu tena baada ya dakika moja.',
+            { headers: corsHeaders },
+          );
+        }
+        const parsed = DonateAmountSchema.safeParse(lastInput);
+        if (!parsed.success) {
+          logSecurityEvent({
+            event_type: "validation_failed",
+            scope: "ussd-donate",
+            ip_address: maskPhone(phoneNumber),
+            details: { menu_path: text.replace(/[^0-9*]/g, "").slice(0, 32), input_len: lastInput.length },
+            severity: "info",
+          });
           response = language === 'en'
             ? `END Invalid amount. Please dial back and enter 10-70000.`
             : `END Kiasi si sahihi. Piga tena na uweke 10-70000.`;
         } else {
+          const amt = parsed.data;
           response = language === 'en'
             ? `END Thank you! To complete your KES ${amt} donation, dial *334# or open MediReach+ app > Support.
 
