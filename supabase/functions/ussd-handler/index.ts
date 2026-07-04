@@ -1,9 +1,18 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
+import { z } from "https://esm.sh/zod@3.23.8";
 import { getClientIP, getCorsHeaders, rejectDisallowedOrigin } from "../_shared/cors.ts";
 import { enforceLimits } from "../_shared/rateLimit.ts";
+import { logSecurityEvent } from "../_shared/securityLog.ts";
 
 const USSD_RESPONSE_HEADERS = { 'Content-Type': 'text/plain' };
+
+const DonateAmountSchema = z.coerce.number().int().min(10).max(70000);
+const ClinicChoiceSchema = z.string().regex(/^[0-9]$/);
+
+function maskPhone(p: string) {
+  return p.length >= 6 ? `${p.slice(0, 4)}***${p.slice(-2)}` : "***";
+}
 
 function sanitizeInput(input: string): string {
   if (!input || typeof input !== 'string') return '';
