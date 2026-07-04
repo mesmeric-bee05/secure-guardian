@@ -234,8 +234,32 @@ serve(async (req) => {
         }
       }
     } else if (inputs[0] === '2') {
-      response = language === 'en'
-        ? `END Nearest Hospitals:
+      // Nearest Clinic — validate sub-input if present, rate-limit per phone.
+      if (inputs.length > 1 && !ClinicChoiceSchema.safeParse(lastInput).success) {
+        logSecurityEvent({
+          event_type: "validation_failed",
+          scope: "ussd-clinic",
+          ip_address: maskPhone(phoneNumber),
+          details: { menu_path: text.replace(/[^0-9*]/g, "").slice(0, 32), input_len: lastInput.length },
+          severity: "info",
+        });
+        response = language === 'en'
+          ? `END Invalid selection. Please dial back and choose a listed number.`
+          : `END Chaguo si sahihi. Piga tena na uchague nambari iliyoorodheshwa.`;
+      } else {
+        const clinicLimited = await enforceLimits({
+          scope: 'ussd-clinic', ip: maskPhone(phoneNumber), ipLimitPerMin: 20, corsHeaders,
+        });
+        if (clinicLimited) {
+          return new Response(
+            language === 'en'
+              ? 'END Too many clinic lookups. Please try again in a minute.'
+              : 'END Maombi mengi ya kliniki. Tafadhali jaribu tena baada ya dakika moja.',
+            { headers: corsHeaders },
+          );
+        }
+        response = language === 'en'
+          ? `END Nearest Hospitals:
 1. Kenyatta National Hospital
    Tel: +254 20 2726300
 
@@ -243,7 +267,7 @@ serve(async (req) => {
    Tel: +254 20 2845000
 
 Call 999 for ambulance.`
-        : `END Hospitali za Karibu:
+          : `END Hospitali za Karibu:
 1. Hospitali ya Kenyatta
    Simu: +254 20 2726300
 
@@ -251,6 +275,7 @@ Call 999 for ambulance.`
    Simu: +254 20 2845000
 
 Piga 999 kwa ambulensi.`;
+      }
     } else if (inputs[0] === '3') {
       response = language === 'en'
         ? `END EMERGENCY ALERT SENT!
