@@ -1,9 +1,18 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
+import { z } from "https://esm.sh/zod@3.23.8";
 import { getClientIP, getCorsHeaders, rejectDisallowedOrigin } from "../_shared/cors.ts";
 import { enforceLimits } from "../_shared/rateLimit.ts";
+import { logSecurityEvent } from "../_shared/securityLog.ts";
 
 const USSD_RESPONSE_HEADERS = { 'Content-Type': 'text/plain' };
+
+const DonateAmountSchema = z.coerce.number().int().min(10).max(70000);
+const ClinicChoiceSchema = z.string().regex(/^[0-9]$/);
+
+function maskPhone(p: string) {
+  return p.length >= 6 ? `${p.slice(0, 4)}***${p.slice(-2)}` : "***";
+}
 
 function sanitizeInput(input: string): string {
   if (!input || typeof input !== 'string') return '';
@@ -225,8 +234,32 @@ serve(async (req) => {
         }
       }
     } else if (inputs[0] === '2') {
-      response = language === 'en'
-        ? `END Nearest Hospitals:
+      // Nearest Clinic — validate sub-input if present, rate-limit per phone.
+      if (inputs.length > 1 && !ClinicChoiceSchema.safeParse(lastInput).success) {
+        logSecurityEvent({
+          event_type: "validation_failed",
+          scope: "ussd-clinic",
+          ip_address: maskPhone(phoneNumber),
+          details: { menu_path: text.replace(/[^0-9*]/g, "").slice(0, 32), input_len: lastInput.length },
+          severity: "info",
+        });
+        response = language === 'en'
+          ? `END Invalid selection. Please dial back and choose a listed number.`
+          : `END Chaguo si sahihi. Piga tena na uchague nambari iliyoorodheshwa.`;
+      } else {
+        const clinicLimited = await enforceLimits({
+          scope: 'ussd-clinic', ip: maskPhone(phoneNumber), ipLimitPerMin: 20, corsHeaders,
+        });
+        if (clinicLimited) {
+          return new Response(
+            language === 'en'
+              ? 'END Too many clinic lookups. Please try again in a minute.'
+              : 'END Maombi mengi ya kliniki. Tafadhali jaribu tena baada ya dakika moja.',
+            { headers: corsHeaders },
+          );
+        }
+        response = language === 'en'
+          ? `END Nearest Hospitals:
 1. Kenyatta National Hospital
    Tel: +254 20 2726300
 
@@ -234,7 +267,7 @@ serve(async (req) => {
    Tel: +254 20 2845000
 
 Call 999 for ambulance.`
-        : `END Hospitali za Karibu:
+          : `END Hospitali za Karibu:
 1. Hospitali ya Kenyatta
    Simu: +254 20 2726300
 
@@ -242,6 +275,7 @@ Call 999 for ambulance.`
    Simu: +254 20 2845000
 
 Piga 999 kwa ambulensi.`;
+      }
     } else if (inputs[0] === '3') {
       response = language === 'en'
         ? `END EMERGENCY ALERT SENT!
@@ -278,12 +312,31 @@ Enter amount in KES (10-70000):`
           : `CON Changia kwa M-PESA
 Weka kiasi cha KSh (10-70000):`;
       } else {
-        const amt = parseInt(lastInput, 10);
-        if (!Number.isFinite(amt) || amt < 10 || amt > 70000) {
+        const donateLimited = await enforceLimits({
+          scope: 'ussd-donate', ip: maskPhone(phoneNumber), ipLimitPerMin: 10, corsHeaders,
+        });
+        if (donateLimited) {
+          return new Response(
+            language === 'en'
+              ? 'END Too many donation attempts. Please try again in a minute.'
+              : 'END Majaribio mengi ya mchango. Tafadhali jaribu tena baada ya dakika moja.',
+            { headers: corsHeaders },
+          );
+        }
+        const parsed = DonateAmountSchema.safeParse(lastInput);
+        if (!parsed.success) {
+          logSecurityEvent({
+            event_type: "validation_failed",
+            scope: "ussd-donate",
+            ip_address: maskPhone(phoneNumber),
+            details: { menu_path: text.replace(/[^0-9*]/g, "").slice(0, 32), input_len: lastInput.length },
+            severity: "info",
+          });
           response = language === 'en'
             ? `END Invalid amount. Please dial back and enter 10-70000.`
             : `END Kiasi si sahihi. Piga tena na uweke 10-70000.`;
         } else {
+          const amt = parsed.data;
           response = language === 'en'
             ? `END Thank you! To complete your KES ${amt} donation, dial *334# or open MediReach+ app > Support.
 
