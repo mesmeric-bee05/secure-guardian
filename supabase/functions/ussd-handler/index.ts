@@ -234,7 +234,7 @@ serve(async (req) => {
         }
       }
     } else if (inputs[0] === '2') {
-      // Nearest Clinic — validate sub-input if present, rate-limit per phone.
+      // Nearest Clinic — validate sub-input if present, rate-limit per IP + phone.
       if (inputs.length > 1 && !ClinicChoiceSchema.safeParse(lastInput).success) {
         logSecurityEvent({
           event_type: "validation_failed",
@@ -248,7 +248,12 @@ serve(async (req) => {
           : `END Chaguo si sahihi. Piga tena na uchague nambari iliyoorodheshwa.`;
       } else {
         const clinicLimited = await enforceLimits({
-          scope: 'ussd-clinic', ip: maskPhone(phoneNumber), ipLimitPerMin: 20, corsHeaders,
+          scope: 'ussd-clinic',
+          ip: getClientIP(req),
+          userId: maskPhone(phoneNumber),
+          ipLimitPerMin: 60,
+          userLimitPerMin: 20,
+          corsHeaders,
         });
         if (clinicLimited) {
           return new Response(
