@@ -318,7 +318,12 @@ Enter amount in KES (10-70000):`
 Weka kiasi cha KSh (10-70000):`;
       } else {
         const donateLimited = await enforceLimits({
-          scope: 'ussd-donate', ip: maskPhone(phoneNumber), ipLimitPerMin: 10, corsHeaders,
+          scope: 'ussd-donate',
+          ip: getClientIP(req),
+          userId: maskPhone(phoneNumber),
+          ipLimitPerMin: 30,
+          userLimitPerMin: 10,
+          corsHeaders,
         });
         if (donateLimited) {
           return new Response(
