@@ -241,11 +241,11 @@ serve(withSecurityEventFlush(async (req) => {
     } else if (inputs[0] === '2') {
       // Nearest Clinic — validate sub-input if present, rate-limit per IP + phone.
       if (inputs.length > 1 && !ClinicChoiceSchema.safeParse(lastInput).success) {
-        logSecurityEvent({
+        await logSecurityEventSync({
           event_type: "validation_failed",
           scope: "ussd-clinic",
           ip_address: maskPhone(phoneNumber),
-          details: { menu_path: text.replace(/[^0-9*]/g, "").slice(0, 32), input_len: lastInput.length },
+          details: { menu_path: menuPath, phone_hash: phoneHash, input_len: lastInput.length },
           severity: "info",
         });
         response = language === 'en'
@@ -259,6 +259,8 @@ serve(withSecurityEventFlush(async (req) => {
           ipLimitPerMin: 60,
           userLimitPerMin: 20,
           corsHeaders,
+          menuPath,
+          userIdHash: phoneHash,
         });
         if (clinicLimited) {
           return new Response(
