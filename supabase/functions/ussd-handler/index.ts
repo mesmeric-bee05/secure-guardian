@@ -154,7 +154,7 @@ Dalili: maumivu ya kifua, maumivu ya mkono, jasho`,
   },
 };
 
-serve(async (req) => {
+serve(withSecurityEventFlush(async (req) => {
   const corsHeaders = getCorsHeaders(req);
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
