@@ -67,6 +67,10 @@ export async function enforceLimits(opts: {
   ipLimitPerMin: number;
   userLimitPerMin?: number;
   corsHeaders: Record<string, string>;
+  /** Optional menu / route path recorded in the security event details. */
+  menuPath?: string;
+  /** Optional hashed user identifier (e.g. sha256 phone) recorded in details. */
+  userIdHash?: string;
 }): Promise<Response | null> {
   const checks: Promise<RateLimitResult>[] = [
     consume(`${opts.scope}:ip:${opts.ip}`, {
@@ -86,12 +90,18 @@ export async function enforceLimits(opts: {
   const blocked = results.find((r) => !r.allowed);
   if (!blocked) return null;
   const retry = Math.max(1, Math.ceil(blocked.retryAfterSeconds));
-  logSecurityEvent({
+  await logSecurityEventSync({
     event_type: "rate_limit_429",
     scope: opts.scope,
     ip_address: opts.ip,
-    user_id: opts.userId ?? null,
-    details: { retry_after_seconds: retry, remaining: blocked.remaining },
+    user_id: null,
+    details: {
+      retry_after_seconds: retry,
+      remaining: blocked.remaining,
+      menu_path: opts.menuPath ?? null,
+      phone_hash: opts.userIdHash ?? null,
+      user_bucket: opts.userId ?? null,
+    },
     severity: "warn",
   });
   return new Response(
