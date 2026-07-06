@@ -1,7 +1,7 @@
 // Postgres-backed durable token-bucket rate limiter shared across all
 // edge function instances. Survives cold starts.
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
-import { logSecurityEvent } from "./securityLog.ts";
+import { logSecurityEventSync } from "./securityLog.ts";
 
 export interface RateLimitConfig {
   /** Bucket capacity (max burst). */
