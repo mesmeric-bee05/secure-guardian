@@ -3,7 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 import { z } from "https://esm.sh/zod@3.23.8";
 import { getClientIP, getCorsHeaders, rejectDisallowedOrigin } from "../_shared/cors.ts";
 import { enforceLimits } from "../_shared/rateLimit.ts";
-import { logSecurityEvent } from "../_shared/securityLog.ts";
+import { logSecurityEventSync, sha256Hex, withSecurityEventFlush } from "../_shared/securityLog.ts";
 
 const USSD_RESPONSE_HEADERS = { 'Content-Type': 'text/plain' };
 
@@ -154,7 +154,7 @@ Dalili: maumivu ya kifua, maumivu ya mkono, jasho`,
   },
 };
 
-serve(async (req) => {
+serve(withSecurityEventFlush(async (req) => {
   const corsHeaders = getCorsHeaders(req);
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -178,13 +178,18 @@ serve(async (req) => {
       return new Response('END Invalid request.', { headers: corsHeaders });
     }
 
+    const phoneHash = await sha256Hex(phoneNumber);
+    const menuPath = text.replace(/[^0-9*]/g, '').slice(0, 32);
+
     // Durable per-phone + per-IP limits (USSD callbacks)
     const ipLimited = await enforceLimits({
       scope: 'ussd-ip', ip: getClientIP(req), ipLimitPerMin: 120, corsHeaders,
+      menuPath, userIdHash: phoneHash,
     });
     if (ipLimited) return new Response('END Too many requests.', { headers: corsHeaders });
     const phoneLimited = await enforceLimits({
       scope: 'ussd-phone', ip: phoneNumber, ipLimitPerMin: 30, corsHeaders,
+      menuPath, userIdHash: phoneHash,
     });
     if (phoneLimited) return new Response('END Too many requests. Please try again later.', { headers: corsHeaders });
 
@@ -236,11 +241,11 @@ serve(async (req) => {
     } else if (inputs[0] === '2') {
       // Nearest Clinic — validate sub-input if present, rate-limit per IP + phone.
       if (inputs.length > 1 && !ClinicChoiceSchema.safeParse(lastInput).success) {
-        logSecurityEvent({
+        await logSecurityEventSync({
           event_type: "validation_failed",
           scope: "ussd-clinic",
           ip_address: maskPhone(phoneNumber),
-          details: { menu_path: text.replace(/[^0-9*]/g, "").slice(0, 32), input_len: lastInput.length },
+          details: { menu_path: menuPath, phone_hash: phoneHash, input_len: lastInput.length },
           severity: "info",
         });
         response = language === 'en'
@@ -254,6 +259,8 @@ serve(async (req) => {
           ipLimitPerMin: 60,
           userLimitPerMin: 20,
           corsHeaders,
+          menuPath,
+          userIdHash: phoneHash,
         });
         if (clinicLimited) {
           return new Response(
@@ -324,6 +331,8 @@ Weka kiasi cha KSh (10-70000):`;
           ipLimitPerMin: 30,
           userLimitPerMin: 10,
           corsHeaders,
+          menuPath,
+          userIdHash: phoneHash,
         });
         if (donateLimited) {
           return new Response(
@@ -335,11 +344,11 @@ Weka kiasi cha KSh (10-70000):`;
         }
         const parsed = DonateAmountSchema.safeParse(lastInput);
         if (!parsed.success) {
-          logSecurityEvent({
+          await logSecurityEventSync({
             event_type: "validation_failed",
             scope: "ussd-donate",
             ip_address: maskPhone(phoneNumber),
-            details: { menu_path: text.replace(/[^0-9*]/g, "").slice(0, 32), input_len: lastInput.length },
+            details: { menu_path: menuPath, phone_hash: phoneHash, input_len: lastInput.length },
             severity: "info",
           });
           response = language === 'en'
@@ -367,4 +376,4 @@ Ukarimu wako huweka huduma ya dharura bure.`;
     console.error('USSD handler error:', error instanceof Error ? error.message : 'Unknown');
     return new Response('END An error occurred. Please try again.', { headers: corsHeaders });
   }
-});
+}));
