@@ -376,4 +376,4 @@ Ukarimu wako huweka huduma ya dharura bure.`;
     console.error('USSD handler error:', error instanceof Error ? error.message : 'Unknown');
     return new Response('END An error occurred. Please try again.', { headers: corsHeaders });
   }
-});
+}));
