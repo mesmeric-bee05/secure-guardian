@@ -178,13 +178,18 @@ serve(withSecurityEventFlush(async (req) => {
       return new Response('END Invalid request.', { headers: corsHeaders });
     }
 
+    const phoneHash = await sha256Hex(phoneNumber);
+    const menuPath = text.replace(/[^0-9*]/g, '').slice(0, 32);
+
     // Durable per-phone + per-IP limits (USSD callbacks)
     const ipLimited = await enforceLimits({
       scope: 'ussd-ip', ip: getClientIP(req), ipLimitPerMin: 120, corsHeaders,
+      menuPath, userIdHash: phoneHash,
     });
     if (ipLimited) return new Response('END Too many requests.', { headers: corsHeaders });
     const phoneLimited = await enforceLimits({
       scope: 'ussd-phone', ip: phoneNumber, ipLimitPerMin: 30, corsHeaders,
+      menuPath, userIdHash: phoneHash,
     });
     if (phoneLimited) return new Response('END Too many requests. Please try again later.', { headers: corsHeaders });
 
