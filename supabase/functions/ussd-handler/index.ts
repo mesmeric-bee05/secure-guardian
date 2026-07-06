@@ -3,7 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 import { z } from "https://esm.sh/zod@3.23.8";
 import { getClientIP, getCorsHeaders, rejectDisallowedOrigin } from "../_shared/cors.ts";
 import { enforceLimits } from "../_shared/rateLimit.ts";
-import { logSecurityEvent } from "../_shared/securityLog.ts";
+import { logSecurityEventSync, sha256Hex, withSecurityEventFlush } from "../_shared/securityLog.ts";
 
 const USSD_RESPONSE_HEADERS = { 'Content-Type': 'text/plain' };
 
