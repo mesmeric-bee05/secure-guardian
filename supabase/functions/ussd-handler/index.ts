@@ -331,6 +331,8 @@ Weka kiasi cha KSh (10-70000):`;
           ipLimitPerMin: 30,
           userLimitPerMin: 10,
           corsHeaders,
+          menuPath,
+          userIdHash: phoneHash,
         });
         if (donateLimited) {
           return new Response(
@@ -342,11 +344,11 @@ Weka kiasi cha KSh (10-70000):`;
         }
         const parsed = DonateAmountSchema.safeParse(lastInput);
         if (!parsed.success) {
-          logSecurityEvent({
+          await logSecurityEventSync({
             event_type: "validation_failed",
             scope: "ussd-donate",
             ip_address: maskPhone(phoneNumber),
-            details: { menu_path: text.replace(/[^0-9*]/g, "").slice(0, 32), input_len: lastInput.length },
+            details: { menu_path: menuPath, phone_hash: phoneHash, input_len: lastInput.length },
             severity: "info",
           });
           response = language === 'en'
