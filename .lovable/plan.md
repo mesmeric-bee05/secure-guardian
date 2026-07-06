@@ -1,46 +1,46 @@
-# Phase 8 — Verification, CI Gate, USSD Consistency, Security Events Admin
+## Goal
+Make USSD security event logging durable so 429/validation incidents always land in `security_events`, and prove it with an e2e burst test.
 
-## 1. Run M-PESA e2e tests (sandbox + production)
-- Execute `supabase--test_edge_functions` for `mpesa-stk-push` and `mpesa-callback`.
-- Run once with `MPESA_ENV=sandbox` and once with `MPESA_ENV=production` (override via test env setup in each `*.e2e.test.ts`; mock Daraja host per env).
-- Capture failing assertions and Daraja mock responses; fix any regressions in the handlers (not the tests) if the contract drifted.
-- Deliverable: green test output pasted into chat with per-test timing; any fixed handler diffs.
+## Root cause
+`logSecurityEvent` in `supabase/functions/_shared/securityLog.ts` is fire-and-forget: it kicks off an async insert and returns immediately. In the USSD path we then `return new Response(...)` synchronously, so the edge runtime tears the isolate down before the insert flushes. The existing `flushSecurityEvents()` helper is only awaited in tests, never in production request handlers.
 
-## 2. CI workflow for Playwright smoke tests
-- New file: `.github/workflows/smoke-tests.yml`.
-- Triggers: `pull_request` and `push` to `main`.
-- Steps: checkout → setup-node 20 → `bun install` → `bunx playwright install --with-deps chromium` → start Vite (`bun run dev &` + wait-on `http://localhost:8080`) → run Playwright specs targeting `/support` (EN + SW, JSON-LD assertion, donation preset buttons) and `/admin` CHW Analytics tab (charts render, CSV export downloads non-empty file).
-- Move existing ad-hoc smoke scripts into `tests/smoke/` as committed Playwright specs (`support.spec.ts`, `chw-analytics.spec.ts`).
-- Job marked `required` via branch protection note in the workflow README; failure blocks merge.
-- Upload `playwright-report/` as artifact on failure.
+## Changes
 
-## 3. Consistent IP+User rate limiting on USSD branches
-- `supabase/functions/ussd-handler/index.ts`: today donate/clinic use only phone-scoped buckets. Add IP-scoped bucket in parallel via `enforceLimits({ ip: getClientIP(req), userId: phoneNumber, ipLimitPerMin, userLimitPerMin })` so both dimensions are enforced.
-- Standardize limits: donate 10/min per phone + 30/min per IP; clinic 20/min per phone + 60/min per IP.
-- Return bilingual 429 body (EN/SW) with `Retry-After` header preserved from `enforceLimits`; keep the `END ...` USSD shape so gateways render it.
-- Ensure denials continue to write `rate_limit_429` rows via existing `logSecurityEvent` path inside `enforceLimits`.
-- Add burst test: `supabase/functions/ussd-handler/ussd.loadburst.test.ts` — fire 40 rapid donate hits from the same phone/IP; assert first N succeed, remainder return bilingual 429 and produce `security_events` rows. Run via `supabase--test_edge_functions`.
+### 1. Reliable-write logger (`supabase/functions/_shared/securityLog.ts`)
+- Keep the `pending` set and `flushSecurityEvents()` for test parity.
+- Add `logSecurityEventSync(ev)` that awaits the insert with a short timeout (1500 ms) and, on failure, retries once, then falls back to `console.error` with a structured tag `SECURITY_EVENT_FALLBACK` so logs remain forensically recoverable.
+- Add `withSecurityEventFlush(handler)` wrapper: runs the handler, then `await flushSecurityEvents()` inside a `try/finally` before the response is returned. This guarantees any fire-and-forget calls drain before isolate shutdown.
+- Insert payload gains a stable `menu_path` field (already passed in `details`) and a `phone_hash` field (SHA-256 hex of the raw phone, computed via `crypto.subtle.digest`) so tests can assert on a deterministic value without storing PII.
 
-## 4. Security Events admin view
-- New tab in Admin panel: `src/components/admin/SecurityEventsTab.tsx` (register in `AdminSidebar.tsx` + `pages/Admin.tsx`).
-- Data source: existing `public.security_events` table (already RLS-restricted to admins).
-- Filters: `event_type` (select from distinct values), `scope` / `menu_path` (text), phone hash (text — matches `ip_address` field when USSD masks phone there), date range (from/to).
-- Table: paginated (50/page), columns: created_at, event_type, scope, severity, ip_address, user_id, details (expandable JSON).
-- CSV export: reuse `CSVExportButton` pattern; server-side export via new edge function `supabase/functions/security-events-export/index.ts` (admin-only, JWT verified in code, streams CSV) so large ranges don't hit browser memory. Mirrors `reports-export` structure.
-- Bilingual labels via `src/lib/translations.ts`.
+### 2. USSD handler (`supabase/functions/ussd-handler/index.ts`)
+- Wrap the `serve` handler body with `withSecurityEventFlush` so every response (including early 429 returns from `enforceLimits`) waits for pending inserts.
+- Switch the two explicit `logSecurityEvent` calls (donate + clinic validation failures) to `await logSecurityEventSync(...)` so denials are guaranteed persisted before the USSD "END ..." body is returned.
+- Add `phone_hash` (hashed `phoneNumber`) into the `details` of every security event emitted from this function, alongside the existing `menu_path`.
+
+### 3. Rate limiter (`supabase/functions/_shared/rateLimit.ts`)
+- In `enforceLimits`, change the denial log to `await logSecurityEventSync(...)` and include `menu_path` (from a new optional `opts.menuPath`) plus `phone_hash` (from a new optional `opts.userIdHash`) so the burst test can filter precisely.
+- Pass `menuPath` and `userIdHash` from the USSD handler at every `enforceLimits` call site (donate, clinic, ip, phone). Non-USSD callers keep working because both fields are optional.
+
+### 4. E2E burst test (`supabase/functions/ussd-handler/ussd.securityevents.e2e.test.ts`)
+- New Deno test. Uses service-role client via `SUPABASE_SERVICE_ROLE_KEY` from `.env` (loaded via `dotenv/load.ts`).
+- Generates a fresh phone, computes its SHA-256 hash locally.
+- Fires 25 donate requests (`text=5*500`) at the deployed `ussd-handler` in a tight loop.
+- Asserts responses include at least one bilingual throttle body.
+- Queries `security_events` where `event_type='rate_limit_429'`, `scope='ussd-donate'`, `details->>'phone_hash' = <hash>`, `created_at >= testStart`; asserts `count >= 1`.
+- Repeats for clinic (`text=2`, 35 hits, `scope='ussd-clinic'`).
+- Also asserts a `validation_failed` row lands when firing `text=5*abc` once (invalid donate amount) — filtered by `details->>'menu_path'`.
+- Calls `flushSecurityEvents()` at the end for sanitizer cleanliness.
+
+### 5. Config
+- No schema migration required — `security_events.details` is already `jsonb`, so adding `menu_path` / `phone_hash` keys is transparent.
+- `verify_jwt = false` already set for `ussd-handler`.
 
 ## Out of scope
-- No schema migrations (security_events table + RLS already exist).
-- No changes to non-USSD edge functions beyond what item 1 uncovers.
-- No new payment providers or visual redesign.
+- No changes to the admin `SecurityEventsTab` UI (already filters on `details` JSON).
+- No changes to non-USSD edge functions beyond the optional new params on `enforceLimits`.
+- No new tables or queue infra — awaiting the insert within the request (with `withSecurityEventFlush` as safety net) is sufficient given <5 ms typical insert latency and the token-bucket already caps write volume.
 
-## Verification checklist
-- Item 1: both env runs green in tool output.
-- Item 2: workflow file valid (`actionlint` via CI itself); intentional failing PR blocks merge.
-- Item 3: burst test asserts denials + `security_events` rows; manual `supabase--read_query` confirms `rate_limit_429` with `scope IN ('ussd-donate','ussd-clinic')` and both `ip:` and `user:` bucket keys appear.
-- Item 4: admin can filter + export; non-admin gets 403 from export function; Playwright smoke covers tab render + CSV download.
-
-## Technical notes
-- Use `getClientIP(req)` from `_shared/cors.ts` for IP dimension; keep `maskPhone(phoneNumber)` as the user dimension key so PII never lands in bucket names.
-- CSV export function: `verify_jwt=false` in code (matches project convention), validate admin via `has_role(auth.uid(), 'admin')` RPC before streaming.
-- Playwright CI: pin Chromium via `PLAYWRIGHT_BROWSERS_PATH=0` and cache `~/.cache/ms-playwright`.
+## Verification
+- Run `supabase--test_edge_functions` targeting `ussd-handler` — new burst test must pass.
+- Manual `supabase--read_query`: `SELECT scope, count(*) FROM security_events WHERE created_at > now() - interval '5 min' AND event_type='rate_limit_429' GROUP BY 1` shows both `ussd-donate` and `ussd-clinic` rows.
+- Existing `ussd.loadburst.test.ts` continues to pass.
