@@ -10,6 +10,15 @@ const USSD_RESPONSE_HEADERS = { 'Content-Type': 'text/plain' };
 const DonateAmountSchema = z.coerce.number().int().min(10).max(70000);
 const ClinicChoiceSchema = z.string().regex(/^[0-9]$/);
 
+// Strict top-level Africa's Talking USSD payload schema. Unknown fields are rejected.
+const UssdPayloadSchema = z.object({
+  sessionId: z.string().min(1).max(100).regex(/^[a-zA-Z0-9\-_]+$/),
+  phoneNumber: z.string().min(6).max(20).regex(/^\+?[0-9]+$/),
+  text: z.string().max(160).regex(/^[0-9*#]*$/),
+  serviceCode: z.string().max(20).optional(),
+  networkCode: z.string().max(20).optional(),
+}).strict();
+
 function maskPhone(p: string) {
   return p.length >= 6 ? `${p.slice(0, 4)}***${p.slice(-2)}` : "***";
 }
