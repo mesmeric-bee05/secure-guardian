@@ -15,11 +15,12 @@ import { Loader2 } from 'lucide-react';
 const ReportsPage = lazy(() => import('@/pages/Reports'));
 const AnalyticsDashboardTab = lazy(() => import('@/components/admin/AnalyticsDashboardTab'));
 const SecurityEventsTab = lazy(() => import('@/components/admin/SecurityEventsTab'));
+const SecurityAnalyticsTab = lazy(() => import('@/components/admin/SecurityAnalyticsTab'));
 const BlockchainIntegrityTab = lazy(() => import('@/components/admin/BlockchainIntegrityTab'));
 const CHWAnalyticsTab = lazy(() => import('@/components/admin/CHWAnalyticsTab'));
 const MpesaConfigTab = lazy(() => import('@/components/admin/MpesaConfigTab'));
 
-type AdminTab = 'users' | 'facilities' | 'protocols' | 'audit' | 'chw' | 'chwAnalytics' | 'sms' | 'reports' | 'analytics' | 'security' | 'integrity' | 'mpesa';
+type AdminTab = 'users' | 'facilities' | 'protocols' | 'audit' | 'chw' | 'chwAnalytics' | 'sms' | 'reports' | 'analytics' | 'security' | 'securityAnalytics' | 'integrity' | 'mpesa';
 
 export default function Admin() {
   const navigate = useNavigate();
