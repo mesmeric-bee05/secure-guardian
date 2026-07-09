@@ -64,6 +64,12 @@ export default function Admin() {
             <SecurityEventsTab />
           </Suspense>
         );
+      case 'securityAnalytics':
+        return (
+          <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>}>
+            <SecurityAnalyticsTab />
+          </Suspense>
+        );
       case 'integrity':
         return (
           <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>}>
