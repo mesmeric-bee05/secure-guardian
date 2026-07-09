@@ -187,6 +187,40 @@ serve(withSecurityEventFlush(async (req) => {
       return new Response('END Invalid request.', { headers: corsHeaders });
     }
 
+    const formData = await req.formData();
+    const raw: Record<string, string> = {};
+    for (const [k, v] of formData.entries()) {
+      if (typeof v === 'string') raw[k] = v;
+    }
+
+    const parsedPayload = UssdPayloadSchema.safeParse(raw);
+    if (!parsedPayload.success) {
+      const rawPhone = typeof raw.phoneNumber === 'string' ? raw.phoneNumber.replace(/[^0-9+]/g, '').slice(0, 20) : '';
+      const phoneHashForFail = rawPhone ? await sha256Hex(rawPhone) : 'unknown';
+      const menuPathForFail = typeof raw.text === 'string' ? raw.text.replace(/[^0-9*]/g, '').slice(0, 32) : '';
+      await logSecurityEventSync({
+        event_type: 'validation_failed',
+        scope: 'ussd-schema',
+        ip_address: getClientIP(req),
+        details: {
+          phone_hash: phoneHashForFail,
+          menu_path: menuPathForFail,
+          fields: Object.keys(raw),
+          issues: parsedPayload.error.issues.map((i) => i.path.join('.') || '(root)'),
+        },
+        severity: 'info',
+      });
+      return new Response('END Invalid request.', { headers: corsHeaders });
+    }
+
+    const sessionId = sanitizeSessionId(parsedPayload.data.sessionId);
+    const phoneNumber = sanitizePhoneNumber(parsedPayload.data.phoneNumber);
+    const text = sanitizeInput(parsedPayload.data.text);
+
+    if (!sessionId || !phoneNumber) {
+      return new Response('END Invalid request.', { headers: corsHeaders });
+    }
+
     const phoneHash = await sha256Hex(phoneNumber);
     const menuPath = text.replace(/[^0-9*]/g, '').slice(0, 32);
 
