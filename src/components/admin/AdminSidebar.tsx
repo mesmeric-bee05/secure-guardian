@@ -1,7 +1,7 @@
-import { Users, Building2, FileText, ClipboardList, Shield, UserCog, MessageSquare, BarChart3, Activity, ShieldAlert, Link2, LineChart, Smartphone } from 'lucide-react';
+import { Users, Building2, FileText, ClipboardList, Shield, UserCog, MessageSquare, BarChart3, Activity, ShieldAlert, Link2, LineChart, Smartphone, ChartBar } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-type AdminTab = 'users' | 'facilities' | 'protocols' | 'audit' | 'chw' | 'chwAnalytics' | 'sms' | 'reports' | 'analytics' | 'security' | 'integrity' | 'mpesa';
+type AdminTab = 'users' | 'facilities' | 'protocols' | 'audit' | 'chw' | 'chwAnalytics' | 'sms' | 'reports' | 'analytics' | 'security' | 'securityAnalytics' | 'integrity' | 'mpesa';
 
 interface AdminSidebarProps {
   activeTab: AdminTab;
@@ -18,6 +18,7 @@ const navItems = [
   { id: 'audit' as const, label: 'Audit Logs', icon: ClipboardList },
   { id: 'integrity' as const, label: 'Chain Integrity', icon: Link2 },
   { id: 'security' as const, label: 'Security Events', icon: ShieldAlert },
+  { id: 'securityAnalytics' as const, label: 'Security Analytics', icon: ChartBar },
   { id: 'reports' as const, label: 'Reports', icon: BarChart3 },
   { id: 'analytics' as const, label: 'Analytics', icon: Activity },
   { id: 'mpesa' as const, label: 'M-PESA Config', icon: Smartphone },
