@@ -178,14 +178,6 @@ serve(withSecurityEventFlush(async (req) => {
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    const formData = await req.formData();
-    const sessionId = sanitizeSessionId(formData.get('sessionId') as string);
-    const phoneNumber = sanitizePhoneNumber(formData.get('phoneNumber') as string);
-    const text = sanitizeInput(formData.get('text') as string || '');
-
-    if (!sessionId || !phoneNumber) {
-      return new Response('END Invalid request.', { headers: corsHeaders });
-    }
 
     const formData = await req.formData();
     const raw: Record<string, string> = {};
