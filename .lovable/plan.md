@@ -1,46 +1,62 @@
-## Goal
-Make USSD security event logging durable so 429/validation incidents always land in `security_events`, and prove it with an e2e burst test.
+# Phase 10 — USSD Schema Validation & Security Analytics
 
-## Root cause
-`logSecurityEvent` in `supabase/functions/_shared/securityLog.ts` is fire-and-forget: it kicks off an async insert and returns immediately. In the USSD path we then `return new Response(...)` synchronously, so the edge runtime tears the isolate down before the insert flushes. The existing `flushSecurityEvents()` helper is only awaited in tests, never in production request handlers.
+Prior phases already delivered durable `logSecurityEventSync` + `withSecurityEventFlush`, phone-hash/menu-path enrichment on USSD denials, and an e2e burst test (`ussd.securityevents.e2e.test.ts`). This phase closes the remaining items: strict top-level USSD schema validation, a validation-focused e2e test, and an admin analytics panel over `security_events`.
 
-## Changes
+## 1. Strict schema validation for USSD handler
 
-### 1. Reliable-write logger (`supabase/functions/_shared/securityLog.ts`)
-- Keep the `pending` set and `flushSecurityEvents()` for test parity.
-- Add `logSecurityEventSync(ev)` that awaits the insert with a short timeout (1500 ms) and, on failure, retries once, then falls back to `console.error` with a structured tag `SECURITY_EVENT_FALLBACK` so logs remain forensically recoverable.
-- Add `withSecurityEventFlush(handler)` wrapper: runs the handler, then `await flushSecurityEvents()` inside a `try/finally` before the response is returned. This guarantees any fire-and-forget calls drain before isolate shutdown.
-- Insert payload gains a stable `menu_path` field (already passed in `details`) and a `phone_hash` field (SHA-256 hex of the raw phone, computed via `crypto.subtle.digest`) so tests can assert on a deterministic value without storing PII.
+File: `supabase/functions/ussd-handler/index.ts`
 
-### 2. USSD handler (`supabase/functions/ussd-handler/index.ts`)
-- Wrap the `serve` handler body with `withSecurityEventFlush` so every response (including early 429 returns from `enforceLimits`) waits for pending inserts.
-- Switch the two explicit `logSecurityEvent` calls (donate + clinic validation failures) to `await logSecurityEventSync(...)` so denials are guaranteed persisted before the USSD "END ..." body is returned.
-- Add `phone_hash` (hashed `phoneNumber`) into the `details` of every security event emitted from this function, alongside the existing `menu_path`.
+- Define a Zod schema for the Africa's Talking form payload:
+  - `sessionId`: `z.string().min(1).max(100).regex(/^[a-zA-Z0-9\-_]+$/)`
+  - `phoneNumber`: `z.string().min(6).max(20).regex(/^\+?[0-9]+$/)`
+  - `text`: `z.string().max(160).regex(/^[0-9*#]*$/)`
+  - `serviceCode`: `z.string().max(20).optional()`
+  - `networkCode`: `z.string().max(20).optional()`
+- Convert `formData` to a plain object and run `schema.strict().safeParse(...)` so unexpected keys are rejected.
+- On failure:
+  - Compute `phoneHash` from the raw phone if present (else `"unknown"`).
+  - `await logSecurityEventSync({ event_type: "validation_failed", scope: "ussd-schema", ip_address: getClientIP(req), details: { phone_hash, menu_path: sanitized text prefix, fields: Object.keys(raw), issues: parsed.error.issues.map(i => i.path.join('.')) } })`.
+  - Return `END Invalid request.` (bilingual fallback English only, since we can't trust language field).
+- Keep existing per-branch sanitizers as defense-in-depth after schema passes.
 
-### 3. Rate limiter (`supabase/functions/_shared/rateLimit.ts`)
-- In `enforceLimits`, change the denial log to `await logSecurityEventSync(...)` and include `menu_path` (from a new optional `opts.menuPath`) plus `phone_hash` (from a new optional `opts.userIdHash`) so the burst test can filter precisely.
-- Pass `menuPath` and `userIdHash` from the USSD handler at every `enforceLimits` call site (donate, clinic, ip, phone). Non-USSD callers keep working because both fields are optional.
+## 2. E2E test: validation + missing-field failures
 
-### 4. E2E burst test (`supabase/functions/ussd-handler/ussd.securityevents.e2e.test.ts`)
-- New Deno test. Uses service-role client via `SUPABASE_SERVICE_ROLE_KEY` from `.env` (loaded via `dotenv/load.ts`).
-- Generates a fresh phone, computes its SHA-256 hash locally.
-- Fires 25 donate requests (`text=5*500`) at the deployed `ussd-handler` in a tight loop.
-- Asserts responses include at least one bilingual throttle body.
-- Queries `security_events` where `event_type='rate_limit_429'`, `scope='ussd-donate'`, `details->>'phone_hash' = <hash>`, `created_at >= testStart`; asserts `count >= 1`.
-- Repeats for clinic (`text=2`, 35 hits, `scope='ussd-clinic'`).
-- Also asserts a `validation_failed` row lands when firing `text=5*abc` once (invalid donate amount) — filtered by `details->>'menu_path'`.
-- Calls `flushSecurityEvents()` at the end for sanitizer cleanliness.
+New file: `supabase/functions/ussd-handler/ussd.validation.e2e.test.ts`
 
-### 5. Config
-- No schema migration required — `security_events.details` is already `jsonb`, so adding `menu_path` / `phone_hash` keys is transparent.
-- `verify_jwt = false` already set for `ussd-handler`.
+Cases (each asserts a `security_events` row within 5s using service-role client, matching `event_type`, `scope`, `details->>phone_hash`, `details->>menu_path`):
 
-## Out of scope
-- No changes to the admin `SecurityEventsTab` UI (already filters on `details` JSON).
-- No changes to non-USSD edge functions beyond the optional new params on `enforceLimits`.
-- No new tables or queue infra — awaiting the insert within the request (with `withSecurityEventFlush` as safety net) is sufficient given <5 ms typical insert latency and the token-bucket already caps write volume.
+1. Missing `phoneNumber` → expect `scope=ussd-schema`, `event_type=validation_failed`, phone_hash `unknown`.
+2. Missing `sessionId` → same scope.
+3. Unexpected extra field (`text`, valid + extra `evil=1`) → `scope=ussd-schema`, phone_hash present.
+4. Bad `text` characters (letters) → `scope=ussd-schema`.
+5. Invalid donate amount (`5*99999`) — regression check that per-branch `scope=ussd-donate` `validation_failed` still fires.
 
-## Verification
-- Run `supabase--test_edge_functions` targeting `ussd-handler` — new burst test must pass.
-- Manual `supabase--read_query`: `SELECT scope, count(*) FROM security_events WHERE created_at > now() - interval '5 min' AND event_type='rate_limit_429' GROUP BY 1` shows both `ussd-donate` and `ussd-clinic` rows.
-- Existing `ussd.loadburst.test.ts` continues to pass.
+Uses `flushSecurityEvents()` between cases and the same `waitForRow` helper pattern already in `ussd.securityevents.e2e.test.ts`.
+
+## 3. Admin analytics panel for security_events
+
+New file: `src/components/admin/SecurityAnalyticsTab.tsx`
+
+- Uses existing `SecurityEventsTab` patterns (auth, admin gate via `is_admin`).
+- Filters: date range (default last 7 days), granularity (hour/day) via `<Select>`.
+- Queries (client-side aggregation via `supabase.from('security_events').select('event_type, scope, created_at')` in date range, capped at 5000 rows; if hit, warn user to narrow range).
+- Charts (Recharts, tokens from `index.css`, no hardcoded colors):
+  - Stacked bar: counts per bucket (day/hour) grouped by `event_type`.
+  - Horizontal bar: top 10 `scope` (menu_path proxy) by count.
+  - Small table: top 10 `details->>phone_hash` occurrences (only for admins; hashed, so PII-safe).
+- CSV export button: reuses `CSVExportButton` if compatible, otherwise inline `Blob` download. Columns: `bucket, event_type, scope, count`.
+- Register the new tab in `src/pages/Admin.tsx` and `src/components/admin/AdminSidebar.tsx` alongside `SecurityEventsTab`.
+
+## 4. Verification
+
+- `supabase--test_edge_functions` on `ussd-handler` running the new validation test file plus the existing burst test.
+- `supabase--read_query` sanity check:
+  `select event_type, scope, count(*) from security_events where created_at > now() - interval '10 minutes' group by 1,2 order by 3 desc`.
+- Manual Playwright pass on `/admin` → Security Analytics tab: date range change, chart renders, CSV downloads.
+
+## Technical notes
+
+- No DB migrations required — `security_events.details` is `jsonb`, `scope` and `event_type` are already indexed via existing admin queries.
+- Analytics tab is read-only; relies on existing RLS on `security_events` (admin-only SELECT).
+- Zod already imported in USSD handler.
+- Keep total plan surface small: no changes to rate limiter, no new edge functions.

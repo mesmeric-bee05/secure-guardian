@@ -10,6 +10,15 @@ const USSD_RESPONSE_HEADERS = { 'Content-Type': 'text/plain' };
 const DonateAmountSchema = z.coerce.number().int().min(10).max(70000);
 const ClinicChoiceSchema = z.string().regex(/^[0-9]$/);
 
+// Strict top-level Africa's Talking USSD payload schema. Unknown fields are rejected.
+const UssdPayloadSchema = z.object({
+  sessionId: z.string().min(1).max(100).regex(/^[a-zA-Z0-9\-_]+$/),
+  phoneNumber: z.string().min(6).max(20).regex(/^\+?[0-9]+$/),
+  text: z.string().max(160).regex(/^[0-9*#]*$/),
+  serviceCode: z.string().max(20).optional(),
+  networkCode: z.string().max(20).optional(),
+}).strict();
+
 function maskPhone(p: string) {
   return p.length >= 6 ? `${p.slice(0, 4)}***${p.slice(-2)}` : "***";
 }
@@ -169,10 +178,36 @@ serve(withSecurityEventFlush(async (req) => {
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
+
     const formData = await req.formData();
-    const sessionId = sanitizeSessionId(formData.get('sessionId') as string);
-    const phoneNumber = sanitizePhoneNumber(formData.get('phoneNumber') as string);
-    const text = sanitizeInput(formData.get('text') as string || '');
+    const raw: Record<string, string> = {};
+    for (const [k, v] of formData.entries()) {
+      if (typeof v === 'string') raw[k] = v;
+    }
+
+    const parsedPayload = UssdPayloadSchema.safeParse(raw);
+    if (!parsedPayload.success) {
+      const rawPhone = typeof raw.phoneNumber === 'string' ? raw.phoneNumber.replace(/[^0-9+]/g, '').slice(0, 20) : '';
+      const phoneHashForFail = rawPhone ? await sha256Hex(rawPhone) : 'unknown';
+      const menuPathForFail = typeof raw.text === 'string' ? raw.text.replace(/[^0-9*]/g, '').slice(0, 32) : '';
+      await logSecurityEventSync({
+        event_type: 'validation_failed',
+        scope: 'ussd-schema',
+        ip_address: getClientIP(req),
+        details: {
+          phone_hash: phoneHashForFail,
+          menu_path: menuPathForFail,
+          fields: Object.keys(raw),
+          issues: parsedPayload.error.issues.map((i) => i.path.join('.') || '(root)'),
+        },
+        severity: 'info',
+      });
+      return new Response('END Invalid request.', { headers: corsHeaders });
+    }
+
+    const sessionId = sanitizeSessionId(parsedPayload.data.sessionId);
+    const phoneNumber = sanitizePhoneNumber(parsedPayload.data.phoneNumber);
+    const text = sanitizeInput(parsedPayload.data.text);
 
     if (!sessionId || !phoneNumber) {
       return new Response('END Invalid request.', { headers: corsHeaders });
