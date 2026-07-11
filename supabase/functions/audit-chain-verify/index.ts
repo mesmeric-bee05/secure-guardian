@@ -52,7 +52,7 @@ serve(async (req) => {
     });
     const token = authHeader.replace("Bearer ", "");
     const { data: claims, error: claimsError } = await supabaseAuth.auth.getClaims(token);
-    if (claimsError || !claims?.claims) {
+    if (claimsError || !claims?.claims?.sub || claims.claims.role !== "authenticated") {
       logSecurityEvent({
         event_type: "auth_failed",
         scope: "audit-chain-verify",

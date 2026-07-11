@@ -45,7 +45,7 @@ serve(async (req) => {
     const token = authHeader.replace('Bearer ', '');
     const { data: claims, error: claimsError } = await supabaseAuth.auth.getClaims(token);
     
-    if (claimsError || !claims?.claims) {
+    if (claimsError || !claims?.claims?.sub || claims.claims.role !== "authenticated") {
       return new Response(
         JSON.stringify({ error: 'Invalid token' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
