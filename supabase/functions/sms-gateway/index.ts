@@ -4,6 +4,7 @@ import { z } from "https://esm.sh/zod@3.23.8";
 import { getCorsHeaders, getClientIP, rejectDisallowedOrigin } from "../_shared/cors.ts";
 import { enforceLimits } from "../_shared/rateLimit.ts";
 import { parseBody, badRequest, PhoneSchema } from "../_shared/validation.ts";
+import { classifyClaims, logJwtFailure } from "../_shared/authLog.ts";
 
 const SmsBodySchema = z.object({
   to: z.union([PhoneSchema, z.array(PhoneSchema).min(1).max(10)]),
