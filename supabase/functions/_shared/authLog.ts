@@ -58,5 +58,15 @@ export function logJwtFailure(ctx: JwtFailureContext): void {
     });
   } catch {
     /* best-effort; console line above is the durable signal */
-  }
+}
+
+/** Classify a post-getClaims failure into a non-sensitive reason enum. */
+export function classifyClaims(
+  err: unknown,
+  claims: { claims?: { sub?: unknown; role?: unknown } } | null | undefined,
+): "invalid_token" | "missing_sub" | "wrong_role" {
+  if (err || !claims?.claims) return "invalid_token";
+  if (!claims.claims.sub) return "missing_sub";
+  return "wrong_role";
+}
 }
