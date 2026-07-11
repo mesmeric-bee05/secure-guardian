@@ -4,6 +4,7 @@ import { z } from "https://esm.sh/zod@3.23.8";
 import { getCorsHeaders, getClientIP, rejectDisallowedOrigin } from "../_shared/cors.ts";
 import { enforceLimits } from "../_shared/rateLimit.ts";
 import { parseBody, badRequest, LatSchema, LngSchema } from "../_shared/validation.ts";
+import { classifyClaims, logJwtFailure } from "../_shared/authLog.ts";
 
 const EmergencyBodySchema = z.object({
   symptoms: z.string().trim().min(5).max(1000),
@@ -32,6 +33,7 @@ serve(async (req) => {
 
     const authHeader = req.headers.get('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
+      logJwtFailure({ fn: 'emergency-alert', reason: 'missing_bearer', authHeader, ip: getClientIP(req) });
       return new Response(
         JSON.stringify({ error: 'Unauthorized' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -46,6 +48,7 @@ serve(async (req) => {
     const { data: claims, error: claimsError } = await supabaseAuth.auth.getClaims(token);
     
     if (claimsError || !claims?.claims?.sub || claims.claims.role !== "authenticated") {
+      logJwtFailure({ fn: 'emergency-alert', reason: classifyClaims(claimsError, claims), authHeader, claims: claims?.claims, ip: getClientIP(req) });
       return new Response(
         JSON.stringify({ error: 'Invalid token' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

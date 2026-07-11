@@ -4,6 +4,7 @@ import { z } from "https://esm.sh/zod@3.23.8";
 import { getCorsHeaders, getClientIP, rejectDisallowedOrigin } from "../_shared/cors.ts";
 import { enforceLimits } from "../_shared/rateLimit.ts";
 import { parseBody, badRequest, LanguageSchema } from "../_shared/validation.ts";
+import { classifyClaims, logJwtFailure } from "../_shared/authLog.ts";
 
 const ChatBodySchema = z.object({
   messages: z.array(
@@ -89,6 +90,7 @@ serve(async (req) => {
     // Validate authentication
     const authHeader = req.headers.get('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
+      logJwtFailure({ fn: 'ai-chat', reason: 'missing_bearer', authHeader, ip: getClientIP(req) });
       return new Response(
         JSON.stringify({ error: 'Unauthorized' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -103,6 +105,7 @@ serve(async (req) => {
     const { data: claims, error: claimsError } = await supabaseAuth.auth.getClaims(token);
     
     if (claimsError || !claims?.claims?.sub || claims.claims.role !== "authenticated") {
+      logJwtFailure({ fn: 'ai-chat', reason: classifyClaims(claimsError, claims), authHeader, claims: claims?.claims, ip: getClientIP(req) });
       return new Response(
         JSON.stringify({ error: 'Unauthorized' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

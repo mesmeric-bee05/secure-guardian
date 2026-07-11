@@ -1,62 +1,75 @@
-# Phase 10 — USSD Schema Validation & Security Analytics
+## Scope
 
-Prior phases already delivered durable `logSecurityEventSync` + `withSecurityEventFlush`, phone-hash/menu-path enrichment on USSD denials, and an e2e burst test (`ussd.securityevents.e2e.test.ts`). This phase closes the remaining items: strict top-level USSD schema validation, a validation-focused e2e test, and an admin analytics panel over `security_events`.
+Seven work items, all additive. No schema changes beyond one policy hardening review; RLS on `security_events` is already admin-only via `is_admin(auth.uid())`, so I'll verify and only add missing scope.
 
-## 1. Strict schema validation for USSD handler
+## 1. SecurityAnalyticsTab — add filters (event_type, menu_path, date range)
 
-File: `supabase/functions/ussd-handler/index.ts`
+`src/components/admin/SecurityAnalyticsTab.tsx`
+- Add three controls: `eventType` (Select populated from distinct types loaded + "All"), `menuPath` (text input, substring match against `scope` and `details->>menu_path`), and existing From/To date range.
+- Push filters into the Supabase query (`.eq('event_type', ...)`, `.or('scope.ilike.%x%,details->>menu_path.ilike.%x%')`).
+- Recompute `series`, `topScopes`, `topPhones`, and CSV export from filtered rows so CSV matches on-screen data.
+- Add `data-testid` hooks (`sec-filter-event-type`, `sec-filter-menu-path`, `sec-filter-from`, `sec-filter-to`, `sec-export-csv`, `sec-row-count`) for reliable Playwright targeting.
 
-- Define a Zod schema for the Africa's Talking form payload:
-  - `sessionId`: `z.string().min(1).max(100).regex(/^[a-zA-Z0-9\-_]+$/)`
-  - `phoneNumber`: `z.string().min(6).max(20).regex(/^\+?[0-9]+$/)`
-  - `text`: `z.string().max(160).regex(/^[0-9*#]*$/)`
-  - `serviceCode`: `z.string().max(20).optional()`
-  - `networkCode`: `z.string().max(20).optional()`
-- Convert `formData` to a plain object and run `schema.strict().safeParse(...)` so unexpected keys are rejected.
-- On failure:
-  - Compute `phoneHash` from the raw phone if present (else `"unknown"`).
-  - `await logSecurityEventSync({ event_type: "validation_failed", scope: "ussd-schema", ip_address: getClientIP(req), details: { phone_hash, menu_path: sanitized text prefix, fields: Object.keys(raw), issues: parsed.error.issues.map(i => i.path.join('.')) } })`.
-  - Return `END Invalid request.` (bilingual fallback English only, since we can't trust language field).
-- Keep existing per-branch sanitizers as defense-in-depth after schema passes.
+## 2. Admin-only guard for the analytics view
 
-## 2. E2E test: validation + missing-field failures
+- Client-side: wrap the tab render in `useAuth()` + `has_role('admin')` check; redirect non-admins. `AdminSidebar`/`Admin.tsx` already gate the whole `/admin` page, so this is defence-in-depth.
+- DB: RLS on `security_events` already restricts `SELECT` to `is_admin(auth.uid())` and `INSERT` is denied to `anon`/`authenticated` (service role only). Confirm and add a matching admin-only policy for `security_events_purge_log` if missing. No new SECURITY DEFINER surface.
 
-New file: `supabase/functions/ussd-handler/ussd.validation.e2e.test.ts`
+## 3. Playwright e2e — SecurityAnalyticsTab filter aggregation
 
-Cases (each asserts a `security_events` row within 5s using service-role client, matching `event_type`, `scope`, `details->>phone_hash`, `details->>menu_path`):
+`tests/e2e/security-analytics-filters.spec.ts` (new folder `tests/e2e/` + `playwright.e2e.config.ts`)
+- Sign in as seeded admin via Supabase JS in a `globalSetup` (using `LOVABLE_BROWSER_SUPABASE_*` env when present, or `TEST_ADMIN_EMAIL`/`PASS`).
+- Seed 6 `security_events` rows via service role: 3 `rate_limit_429` on scope `ussd-donate`, 2 `validation_failed` on `ussd-schema`, 1 `auth_failed` on `ai-chat`, all with distinct `phone_hash`es and timestamps inside a known window.
+- Navigate to `/admin` → Security Analytics tab.
+- Set date filter to seed window, event_type=`rate_limit_429`, menu_path=`donate`. Assert `sec-row-count` shows 3 and the stacked chart legend contains only `rate_limit_429`.
+- Change event_type to All, menu_path to empty → assert row count = 6.
 
-1. Missing `phoneNumber` → expect `scope=ussd-schema`, `event_type=validation_failed`, phone_hash `unknown`.
-2. Missing `sessionId` → same scope.
-3. Unexpected extra field (`text`, valid + extra `evil=1`) → `scope=ussd-schema`, phone_hash present.
-4. Bad `text` characters (letters) → `scope=ussd-schema`.
-5. Invalid donate amount (`5*99999`) — regression check that per-branch `scope=ussd-donate` `validation_failed` still fires.
+## 4. Playwright e2e — CSV export contents match filters
 
-Uses `flushSecurityEvents()` between cases and the same `waitForRow` helper pattern already in `ussd.securityevents.e2e.test.ts`.
+Same spec file, second test.
+- Apply same filters, click Export CSV.
+- Capture download via `page.waitForEvent('download')`, read to buffer, parse CSV.
+- Assert: header is `bucket,event_type,count`, all rows have `event_type=rate_limit_429`, sum of `count` column equals 3, no other event types present.
+- Change filter and re-export; assert new file reflects updated selection.
 
-## 3. Admin analytics panel for security_events
+## 5. USSD burst 429 e2e
 
-New file: `src/components/admin/SecurityAnalyticsTab.tsx`
+`supabase/functions/ussd-handler/ussd.burst429.e2e.test.ts` (new)
+- Uses existing Deno test harness pattern (`ussd.securityevents.e2e.test.ts`).
+- Send 130 rapid POSTs sharing one phoneNumber/IP to exceed both `ussd-ip` (120/min) and `ussd-phone` (30/min) buckets.
+- Assert responses include `END Too many requests.` after threshold.
+- Await `flushSecurityEvents`, then query `security_events` filtered by `event_type='rate_limit_429'` and `details->>phone_hash = sha256(phone)`. Assert: at least one row per limited scope (`ussd-ip`, `ussd-phone`), each with correct `menu_path` and matching `phone_hash`.
+- Second scenario: burst on `ussd-donate` sub-flow to assert `scope='ussd-donate'` row also lands with `menu_path` prefix `5*`.
 
-- Uses existing `SecurityEventsTab` patterns (auth, admin gate via `is_admin`).
-- Filters: date range (default last 7 days), granularity (hour/day) via `<Select>`.
-- Queries (client-side aggregation via `supabase.from('security_events').select('event_type, scope, created_at')` in date range, capped at 5000 rows; if hit, warn user to narrow range).
-- Charts (Recharts, tokens from `index.css`, no hardcoded colors):
-  - Stacked bar: counts per bucket (day/hour) grouped by `event_type`.
-  - Horizontal bar: top 10 `scope` (menu_path proxy) by count.
-  - Small table: top 10 `details->>phone_hash` occurrences (only for admins; hashed, so PII-safe).
-- CSV export button: reuses `CSVExportButton` if compatible, otherwise inline `Blob` download. Columns: `bucket, event_type, scope, count`.
-- Register the new tab in `src/pages/Admin.tsx` and `src/components/admin/AdminSidebar.tsx` alongside `SecurityEventsTab`.
+## 6. Re-run security scan + CI regression gate
 
-## 4. Verification
+- Run `security--run_security_scan` at end of implementation; expect the two target internal_ids (`jwt_sub_unchecked`, `SUPA_anon_security_definer_function_executable`) to remain absent.
+- `scripts/security-regression-check.mjs` (new): reads `security/snapshots/latest.json` and fails with non-zero exit if either internal_id appears in any scanner's findings. Emits a clear "REGRESSION:" message naming the id.
+- `.github/workflows/security-gate.yml`: add step `Regression check for fixed findings` after `Run security gate`, invoking the new script. Same job → merge is blocked on failure.
 
-- `supabase--test_edge_functions` on `ussd-handler` running the new validation test file plus the existing burst test.
-- `supabase--read_query` sanity check:
-  `select event_type, scope, count(*) from security_events where created_at > now() - interval '10 minutes' group by 1,2 order by 3 desc`.
-- Manual Playwright pass on `/admin` → Security Analytics tab: date range change, chart renders, CSV downloads.
+## 7. Non-sensitive JWT validation logs
+
+Shared helper `supabase/functions/_shared/authLog.ts` (new) with:
+- `logJwtFailure(fn: string, reason: 'missing_bearer'|'invalid_token'|'missing_sub'|'wrong_role', extras?)`: `console.warn` with structured JSON `{ fn, reason, has_auth_header, role_present, sub_present, ip_prefix }`. No token, no user id, no email — only booleans and enum reason.
+
+Integrate in the 7 edge functions already hardened last turn (`ai-chat`, `sms-gateway`, `emergency-alert`, `notify-case-update`, `reports-export`, `security-events-export`, `audit-chain-verify`): call `logJwtFailure` on the two failure branches (missing/invalid Authorization, and post-getClaims missing-sub/wrong-role) before returning 401. Also fire-and-forget `logSecurityEvent({ event_type: 'auth_failed', scope: fn, details: { reason } })` so failures show up in the analytics tab.
 
 ## Technical notes
 
-- No DB migrations required — `security_events.details` is `jsonb`, `scope` and `event_type` are already indexed via existing admin queries.
-- Analytics tab is read-only; relies on existing RLS on `security_events` (admin-only SELECT).
-- Zod already imported in USSD handler.
-- Keep total plan surface small: no changes to rate limiter, no new edge functions.
+- No new DB tables. One optional policy verification on `security_events_purge_log`.
+- Filter query uses PostgREST `.or()` on `scope.ilike` and `details->>menu_path.ilike`; both are indexable via existing btree/GIN — no new index required for expected data volume.
+- E2E tests requiring an admin session depend on `LOVABLE_BROWSER_SUPABASE_*` env vars in CI; if absent, the spec is `test.skip`ed with a clear message so the workflow stays green in forks.
+- New CI step is deliberately narrow: only checks for the two internal_ids the user pinned. Other regressions still flow through the existing gate.
+
+## Verification
+
+1. `bun run test` (Vitest) — no frontend regressions.
+2. `supabase--test_edge_functions` on `ussd-handler` — new burst + validation tests pass.
+3. `bunx playwright test --config=playwright.e2e.config.ts` locally against dev server with seeded admin — filter + CSV specs pass.
+4. `security--run_security_scan` — confirm both fixed findings remain gone; then `node scripts/security-regression-check.mjs` exits 0.
+
+## Out of scope
+
+- No changes to rate-limit thresholds.
+- No new admin dashboards beyond the filter additions to the existing tab.
+- No log shipping / external SIEM integration — logs stay in edge-function console + `security_events` table.
