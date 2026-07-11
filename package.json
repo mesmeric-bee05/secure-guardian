@@ -15,7 +15,9 @@
     "security:annotate": "node scripts/security-annotate.mjs",
     "security:issues": "node scripts/security-open-issues.mjs",
     "security:verify-links": "node scripts/security-verify-links.mjs",
-    "test:security-links": "node --test scripts/__tests__/security-links.test.mjs"
+    "test:security-links": "node --test scripts/__tests__/security-links.test.mjs",
+    "security:regression": "node scripts/security-regression-check.mjs",
+    "test:e2e": "playwright test --config=playwright.e2e.config.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
