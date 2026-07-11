@@ -33,6 +33,7 @@ serve(async (req) => {
 
     const authHeader = req.headers.get('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
+      logJwtFailure({ fn: 'sms-gateway', reason: 'missing_bearer', authHeader, ip: getClientIP(req) });
       return new Response(
         JSON.stringify({ error: 'Unauthorized' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -47,6 +48,7 @@ serve(async (req) => {
     const { data: claims, error: claimsError } = await supabaseAuth.auth.getClaims(token);
     
     if (claimsError || !claims?.claims?.sub || claims.claims.role !== "authenticated") {
+      logJwtFailure({ fn: 'sms-gateway', reason: classifyClaims(claimsError, claims), authHeader, claims: claims?.claims, ip: getClientIP(req) });
       return new Response(
         JSON.stringify({ error: 'Unauthorized' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
