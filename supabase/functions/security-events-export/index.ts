@@ -7,6 +7,7 @@ import { getCorsHeaders, getClientIP, rejectDisallowedOrigin } from "../_shared/
 import { enforceLimits } from "../_shared/rateLimit.ts";
 import { parseBody, badRequest } from "../_shared/validation.ts";
 import { logSecurityEvent } from "../_shared/securityLog.ts";
+import { classifyClaims, logJwtFailure } from "../_shared/authLog.ts";
 
 const MAX_ROWS = 50_000;
 const BATCH = 1_000;
@@ -47,7 +48,7 @@ serve(async (req) => {
 
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
-      logSecurityEvent({ event_type: "auth_failed", scope: "security-events-export", ip_address: ip, severity: "warn", details: { reason: "missing_bearer" } });
+      logJwtFailure({ fn: "security-events-export", reason: "missing_bearer", authHeader, ip });
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -59,7 +60,7 @@ serve(async (req) => {
     const token = authHeader.replace("Bearer ", "");
     const { data: claims, error: claimsError } = await supabaseAuth.auth.getClaims(token);
     if (claimsError || !claims?.claims?.sub || claims.claims.role !== "authenticated") {
-      logSecurityEvent({ event_type: "auth_failed", scope: "security-events-export", ip_address: ip, severity: "warn", details: { reason: "invalid_token" } });
+      logJwtFailure({ fn: "security-events-export", reason: classifyClaims(claimsError, claims), authHeader, claims: claims?.claims, ip });
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });

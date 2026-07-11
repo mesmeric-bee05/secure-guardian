@@ -6,6 +6,7 @@ import { z } from "https://esm.sh/zod@3.23.8";
 import { getCorsHeaders, getClientIP, rejectDisallowedOrigin } from "../_shared/cors.ts";
 import { enforceLimits } from "../_shared/rateLimit.ts";
 import { logSecurityEvent } from "../_shared/securityLog.ts";
+import { classifyClaims, logJwtFailure } from "../_shared/authLog.ts";
 
 const BodySchema = z
   .object({
@@ -34,13 +35,7 @@ serve(async (req) => {
 
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
-      logSecurityEvent({
-        event_type: "auth_failed",
-        scope: "audit-chain-verify",
-        ip_address: ip,
-        severity: "warn",
-        details: { reason: "missing_bearer" },
-      });
+      logJwtFailure({ fn: "audit-chain-verify", reason: "missing_bearer", authHeader, ip });
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -53,13 +48,7 @@ serve(async (req) => {
     const token = authHeader.replace("Bearer ", "");
     const { data: claims, error: claimsError } = await supabaseAuth.auth.getClaims(token);
     if (claimsError || !claims?.claims?.sub || claims.claims.role !== "authenticated") {
-      logSecurityEvent({
-        event_type: "auth_failed",
-        scope: "audit-chain-verify",
-        ip_address: ip,
-        severity: "warn",
-        details: { reason: "invalid_token" },
-      });
+      logJwtFailure({ fn: "audit-chain-verify", reason: classifyClaims(claimsError, claims), authHeader, claims: claims?.claims, ip });
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
