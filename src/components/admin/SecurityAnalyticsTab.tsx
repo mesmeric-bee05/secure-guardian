@@ -147,6 +147,16 @@ export default function SecurityAnalyticsTab() {
       .slice(0, 10);
   }, [rows]);
 
+  const auditLog = async (action: string, details: Record<string, unknown>) => {
+    const { error } = await supabase.rpc('log_admin_action', {
+      _action: action,
+      _resource_type: 'security_events',
+      _details: details as never,
+    });
+    if (error) console.warn('audit log failed:', error.message);
+    else loadLastAudit();
+  };
+
   const exportCsv = () => {
     const header = ['bucket', 'event_type', 'count'];
     const lines: string[][] = [header];
