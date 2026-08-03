@@ -60,6 +60,19 @@ export default function SecurityAnalyticsTab() {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
   const [truncated, setTruncated] = useState(false);
+  const [lastAudit, setLastAudit] = useState<{ action: string; created_at: string; rows?: number } | null>(null);
+
+  const loadLastAudit = async () => {
+    const { data } = await supabase
+      .from('audit_logs')
+      .select('action, created_at, details')
+      .eq('resource_type', 'security_events')
+      .in('action', ['security_analytics_export', 'security_analytics_export_failed'])
+      .order('created_at', { ascending: false })
+      .limit(1);
+    const r = (data ?? [])[0] as { action: string; created_at: string; details: { rows?: number } | null } | undefined;
+    setLastAudit(r ? { action: r.action, created_at: r.created_at, rows: r.details?.rows } : null);
+  };
 
   const load = async () => {
     setLoading(true);
