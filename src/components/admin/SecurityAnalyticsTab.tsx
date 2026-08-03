@@ -191,6 +191,15 @@ export default function SecurityAnalyticsTab() {
     a.download = `security-analytics-${from}_${to}-${granularity}-${et}${mp}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+    void auditLog('security_analytics_export', {
+      from,
+      to,
+      granularity,
+      event_type: eventTypeFilter === ALL_EVENT_TYPES ? null : eventTypeFilter,
+      menu_path: menuPathFilter.trim() || null,
+      rows: rows.length,
+      csv_lines: lines.length - 1,
+    });
   };
 
   const COLORS = [
