@@ -107,7 +107,10 @@ export default function SecurityAnalyticsTab() {
   };
 
   useEffect(() => {
-    if (isAdmin()) load();
+    if (isAdmin()) {
+      load();
+      loadLastAudit();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
