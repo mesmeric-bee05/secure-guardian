@@ -141,5 +141,63 @@ test.describe("Security Analytics — filters + CSV", () => {
     expect(total).toBe(3);
     expect(csv).not.toContain("validation_failed");
     expect(csv).not.toContain("auth_failed");
+
+  test("no-match filter shows zero rows and exports a header-only CSV", async ({ page }) => {
+    await login(page);
+    await page.getByTestId("sec-filter-from").fill(fromDateStr());
+    await page.getByTestId("sec-filter-to").fill(toDateStr());
+    await page.getByTestId("sec-filter-menu-path").fill(`no-such-path-${TAG}`);
+    await page.getByTestId("sec-refresh").click();
+    await expect(page.getByTestId("sec-row-count")).toContainText(/^0 rows/);
+
+    const [download] = await Promise.all([
+      page.waitForEvent("download"),
+      page.getByTestId("sec-export-csv").click(),
+    ]);
+    const stream = await download.createReadStream();
+    const chunks: Buffer[] = [];
+    for await (const c of stream!) chunks.push(c as Buffer);
+    const csv = Buffer.concat(chunks).toString("utf8").trim();
+    expect(csv).toBe("bucket,event_type,count");
+  });
+
+  test("admin CSV export writes an audit_logs entry", async ({ page }) => {
+    const admin = createClient(SUPABASE_URL, SERVICE, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    });
+    const since = new Date().toISOString();
+
+    await login(page);
+    await page.getByTestId("sec-filter-from").fill(fromDateStr());
+    await page.getByTestId("sec-filter-to").fill(toDateStr());
+    await page.getByTestId("sec-refresh").click();
+    await expect(page.getByTestId("sec-row-count")).not.toContainText(/^0 rows/);
+
+    await Promise.all([
+      page.waitForEvent("download"),
+      page.getByTestId("sec-export-csv").click(),
+    ]);
+
+    // Poll for the audit row (RPC write is fire-and-forget).
+    let row: { action: string; details: Record<string, unknown> } | undefined;
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline && !row) {
+      const { data } = await admin
+        .from("audit_logs")
+        .select("action, details, created_at")
+        .eq("action", "security_analytics_export")
+        .gte("created_at", since)
+        .order("created_at", { ascending: false })
+        .limit(1);
+      row = (data ?? [])[0] as typeof row;
+      if (!row) await new Promise((r) => setTimeout(r, 500));
+    }
+    expect(row, "expected a security_analytics_export audit entry").toBeTruthy();
+    expect(row!.details).toMatchObject({ granularity: "day" });
+    expect(typeof (row!.details as { rows?: number }).rows).toBe("number");
+
+    // And the UI reflects the trail.
+    await expect(page.getByTestId("sec-last-audit")).toContainText(/Last export: security_analytics_export/);
   });
 });
+

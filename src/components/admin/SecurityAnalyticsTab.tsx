@@ -60,6 +60,19 @@ export default function SecurityAnalyticsTab() {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
   const [truncated, setTruncated] = useState(false);
+  const [lastAudit, setLastAudit] = useState<{ action: string; created_at: string; rows?: number } | null>(null);
+
+  const loadLastAudit = async () => {
+    const { data } = await supabase
+      .from('audit_logs')
+      .select('action, created_at, details')
+      .eq('resource_type', 'security_events')
+      .in('action', ['security_analytics_export', 'security_analytics_export_failed'])
+      .order('created_at', { ascending: false })
+      .limit(1);
+    const r = (data ?? [])[0] as { action: string; created_at: string; details: { rows?: number } | null } | undefined;
+    setLastAudit(r ? { action: r.action, created_at: r.created_at, rows: r.details?.rows } : null);
+  };
 
   const load = async () => {
     setLoading(true);
@@ -94,7 +107,10 @@ export default function SecurityAnalyticsTab() {
   };
 
   useEffect(() => {
-    if (isAdmin()) load();
+    if (isAdmin()) {
+      load();
+      loadLastAudit();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -147,6 +163,16 @@ export default function SecurityAnalyticsTab() {
       .slice(0, 10);
   }, [rows]);
 
+  const auditLog = async (action: string, details: Record<string, unknown>) => {
+    const { error } = await supabase.rpc('log_admin_action', {
+      _action: action,
+      _resource_type: 'security_events',
+      _details: details as never,
+    });
+    if (error) console.warn('audit log failed:', error.message);
+    else loadLastAudit();
+  };
+
   const exportCsv = () => {
     const header = ['bucket', 'event_type', 'count'];
     const lines: string[][] = [header];
@@ -168,6 +194,15 @@ export default function SecurityAnalyticsTab() {
     a.download = `security-analytics-${from}_${to}-${granularity}-${et}${mp}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+    void auditLog('security_analytics_export', {
+      from,
+      to,
+      granularity,
+      event_type: eventTypeFilter === ALL_EVENT_TYPES ? null : eventTypeFilter,
+      menu_path: menuPathFilter.trim() || null,
+      rows: rows.length,
+      csv_lines: lines.length - 1,
+    });
   };
 
   const COLORS = [
@@ -273,7 +308,7 @@ export default function SecurityAnalyticsTab() {
           </Button>
           <Button
             onClick={exportCsv}
-            disabled={rows.length === 0}
+            disabled={loading}
             size="sm"
             data-testid="sec-export-csv"
           >
@@ -282,6 +317,13 @@ export default function SecurityAnalyticsTab() {
           <div className="ml-auto text-sm text-muted-foreground" data-testid="sec-row-count">
             {rows.length} rows{truncated && ' (capped — narrow the date range for full data)'}
           </div>
+        </div>
+        <div className="mt-3 text-xs text-muted-foreground" data-testid="sec-last-audit">
+          {lastAudit
+            ? `Last export: ${lastAudit.action} · ${new Date(lastAudit.created_at).toLocaleString()}${
+                typeof lastAudit.rows === 'number' ? ` · ${lastAudit.rows} rows` : ''
+              }`
+            : 'No export recorded yet'}
         </div>
       </Card>
 
