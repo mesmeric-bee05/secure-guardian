@@ -305,7 +305,7 @@ export default function SecurityAnalyticsTab() {
           </Button>
           <Button
             onClick={exportCsv}
-            disabled={rows.length === 0}
+            disabled={loading}
             size="sm"
             data-testid="sec-export-csv"
           >
@@ -314,6 +314,13 @@ export default function SecurityAnalyticsTab() {
           <div className="ml-auto text-sm text-muted-foreground" data-testid="sec-row-count">
             {rows.length} rows{truncated && ' (capped — narrow the date range for full data)'}
           </div>
+        </div>
+        <div className="mt-3 text-xs text-muted-foreground" data-testid="sec-last-audit">
+          {lastAudit
+            ? `Last export: ${lastAudit.action} · ${new Date(lastAudit.created_at).toLocaleString()}${
+                typeof lastAudit.rows === 'number' ? ` · ${lastAudit.rows} rows` : ''
+              }`
+            : 'No export recorded yet'}
         </div>
       </Card>
 
