@@ -141,6 +141,9 @@ test.describe("Security Analytics — filters + CSV", () => {
     expect(total).toBe(3);
     expect(csv).not.toContain("validation_failed");
     expect(csv).not.toContain("auth_failed");
+  });
+
+
 
   test("no-match filter shows zero rows and exports a header-only CSV", async ({ page }) => {
     await login(page);
