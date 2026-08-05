@@ -92,6 +92,30 @@ test.describe("Security Analytics — filters + CSV", () => {
   function fromDateStr() { return FROM.toISOString().slice(0, 10); }
   function toDateStr() { return NOW.toISOString().slice(0, 10); }
 
+  // The user id of the admin identity `login()` uses — needed to assert the
+  // audit row was attributed to the right actor.
+  async function adminUserId(): Promise<string> {
+    if (STORAGE_KEY && SESSION_JSON) {
+      const s = JSON.parse(SESSION_JSON) as { user?: { id?: string } };
+      if (s.user?.id) return s.user.id;
+    }
+    const c = createClient(SUPABASE_URL, ANON, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    });
+    const { data, error } = await c.auth.signInWithPassword({ email: ADMIN_EMAIL, password: ADMIN_PASS });
+    if (error || !data.user) throw new Error(`admin sign-in failed: ${error?.message}`);
+    return data.user.id;
+  }
+
+  // Numeric row count rendered in the header badge ("N rows...").
+  async function uiRowCount(page: import("@playwright/test").Page): Promise<number> {
+    const txt = (await page.getByTestId("sec-row-count").innerText()).trim();
+    const m = txt.match(/^(\d+)\s+rows/);
+    if (!m) throw new Error(`could not parse row count from "${txt}"`);
+    return Number(m[1]);
+  }
+
+
   test("filters by event_type + menu_path aggregate to the right count", async ({ page }) => {
     await login(page);
     await page.getByTestId("sec-filter-from").fill(fromDateStr());
