@@ -1,0 +1,117 @@
+name: Security E2E
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+  VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+  SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+  TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL }}
+  TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
+  TEST_ADMIN_EMAIL: ${{ secrets.TEST_ADMIN_EMAIL }}
+  TEST_ADMIN_PASSWORD: ${{ secrets.TEST_ADMIN_PASSWORD }}
+
+jobs:
+  security-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # Hard fail before anything runs: a missing secret would otherwise turn
+      # these suites into silent skips and hide real regressions.
+      - name: Require e2e secrets
+        run: |
+          missing=""
+          for v in VITE_SUPABASE_URL VITE_SUPABASE_PUBLISHABLE_KEY SUPABASE_SERVICE_ROLE_KEY \
+                   TEST_USER_EMAIL TEST_USER_PASSWORD TEST_ADMIN_EMAIL TEST_ADMIN_PASSWORD; do
+            if [ -z "${!v}" ]; then missing="$missing $v"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Security e2e cannot run — missing repository secrets:$missing"
+            exit 1
+          fi
+          echo "All required e2e secrets are present."
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('bun.lock') }}
+
+      - name: Install Playwright Chromium
+        run: bunx playwright install --with-deps chromium
+
+      - name: Write .env for Vite
+        run: |
+          {
+            echo "VITE_SUPABASE_URL=$VITE_SUPABASE_URL"
+            echo "VITE_SUPABASE_PUBLISHABLE_KEY=$VITE_SUPABASE_PUBLISHABLE_KEY"
+          } > .env
+
+      - name: Start Vite dev server
+        run: |
+          bun run dev > /tmp/vite.log 2>&1 &
+          echo $! > /tmp/vite.pid
+
+      - name: Wait for dev server
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sSf http://localhost:8080 > /dev/null; then echo "Dev server up"; exit 0; fi
+            sleep 1
+          done
+          echo "Dev server failed to start"; tail -n 100 /tmp/vite.log; exit 1
+
+      - name: Run Security Analytics Playwright e2e
+        run: |
+          bunx playwright test --config=playwright.e2e.config.ts \
+            --reporter=json > playwright-results.json
+
+      - name: Fail if any e2e test was skipped
+        if: always()
+        run: node scripts/assert-no-skips.mjs playwright-results.json
+
+      - name: Stop dev server
+        if: always()
+        run: |
+          if [ -f /tmp/vite.pid ]; then kill "$(cat /tmp/vite.pid)" || true; fi
+
+      - name: Run USSD edge-function Deno e2e tests
+        run: |
+          set -o pipefail
+          deno test --allow-net --allow-env --allow-read --no-check \
+            supabase/functions/ussd-handler/ 2>&1 | tee /tmp/deno-ussd.log
+          if grep -Eq '[1-9][0-9]* ignored' /tmp/deno-ussd.log; then
+            echo "::error::USSD Deno tests were ignored/skipped — required secrets must be configured"
+            exit 1
+          fi
+          if grep -q '0 passed' /tmp/deno-ussd.log; then
+            echo "::error::No USSD Deno tests executed"
+            exit 1
+          fi
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-e2e-report
+          path: |
+            playwright-report/
+            playwright-results.json
+          if-no-files-found: ignore
