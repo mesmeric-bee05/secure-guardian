@@ -127,4 +127,44 @@ test.describe("Security Analytics — non-admin authorization", () => {
       await expect(page.getByTestId("sec-export-csv")).toHaveCount(0);
     }
   });
+
+  test("non-admin hitting the export endpoint URL directly gets 403 with an empty body", async ({ page }) => {
+    const c = createClient(SUPABASE_URL, ANON, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    });
+    const { data } = await c.auth.signInWithPassword({ email: USER_EMAIL, password: USER_PASS });
+    const token = data.session!.access_token;
+
+    // Hit the function URL directly from the browser context (same origin
+    // handling as a user pasting the endpoint into the address bar / fetch).
+    await page.goto("/");
+    const res = await page.request.post(EXPORT_URL, {
+      headers: { apikey: ANON, Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      data: { since: SINCE },
+      failOnStatusCode: false,
+    });
+
+    expect(res.status()).toBe(403);
+    const headers = res.headers();
+    expect(headers["content-type"] ?? "").not.toContain("text/csv");
+    expect(headers["content-disposition"] ?? "").not.toContain("attachment");
+
+    const body = (await res.text()).trim();
+    // No CSV payload of any kind: no header row, no data rows, no seeded data.
+    expect(body).not.toContain("created_at,event_type");
+    expect(body).not.toContain(TAG);
+    expect(body.split("\n").filter((l) => l.includes(","))).toHaveLength(0);
+    // Body is empty or a bare {"error":"Forbidden"} envelope — nothing else.
+    expect(body === "" || JSON.parse(body).error === "Forbidden").toBe(true);
+    if (body !== "") expect(Object.keys(JSON.parse(body))).toEqual(["error"]);
+
+    // A GET on the same URL must not leak data either.
+    const getRes = await page.request.get(EXPORT_URL, {
+      headers: { apikey: ANON, Authorization: `Bearer ${token}` },
+      failOnStatusCode: false,
+    });
+    expect([401, 403, 405]).toContain(getRes.status());
+    expect(await getRes.text()).not.toContain(TAG);
+  });
 });
+
