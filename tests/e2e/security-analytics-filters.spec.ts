@@ -188,43 +188,65 @@ test.describe("Security Analytics — filters + CSV", () => {
     expect(csv).toBe("bucket,event_type,count");
   });
 
-  test("admin CSV export writes an audit_logs entry", async ({ page }) => {
-    const admin = createClient(SUPABASE_URL, SERVICE, {
-      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  for (const bucket of ["day", "hour"] as const) {
+    test(`admin CSV export (${bucket} bucket) writes an audit_logs entry matching the export`, async ({ page }) => {
+      const admin = createClient(SUPABASE_URL, SERVICE, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+      });
+      const expectedUserId = await adminUserId();
+      const since = new Date().toISOString();
+
+      await login(page);
+      await page.getByTestId("sec-filter-from").fill(fromDateStr());
+      await page.getByTestId("sec-filter-to").fill(toDateStr());
+      // Bucket select is the only one without a testid; pick it by current value.
+      await page.getByRole("combobox").filter({ hasText: /^(Hour|Day)$/ }).click();
+      await page.getByRole("option", { name: bucket === "day" ? "Day" : "Hour" }).click();
+      await page.getByTestId("sec-refresh").click();
+      await expect(page.getByTestId("sec-row-count")).not.toContainText(/^0 rows/);
+      const expectedRows = await uiRowCount(page);
+
+      await Promise.all([
+        page.waitForEvent("download"),
+        page.getByTestId("sec-export-csv").click(),
+      ]);
+
+      // Poll for the audit row (RPC write is fire-and-forget).
+      type AuditRow = {
+        action: string;
+        user_id: string | null;
+        resource_type: string | null;
+        details: Record<string, unknown>;
+      };
+      let row: AuditRow | undefined;
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline && !row) {
+        const { data } = await admin
+          .from("audit_logs")
+          .select("action, user_id, resource_type, details, created_at")
+          .eq("action", "security_analytics_export")
+          .gte("created_at", since)
+          .order("created_at", { ascending: false })
+          .limit(1);
+        row = (data ?? [])[0] as AuditRow | undefined;
+        if (!row) await new Promise((r) => setTimeout(r, 500));
+      }
+      expect(row, "expected a security_analytics_export audit entry").toBeTruthy();
+      expect(row!.action).toBe("security_analytics_export");
+      expect(row!.resource_type).toBe("security_events");
+      expect(row!.user_id).toBe(expectedUserId);
+      expect(row!.details).toMatchObject({
+        from: fromDateStr(),
+        to: toDateStr(),
+        granularity: bucket,
+        rows: expectedRows,
+      });
+
+      // And the UI reflects the trail, including the same row count.
+      await expect(page.getByTestId("sec-last-audit")).toContainText(/Last export: security_analytics_export/);
+      await expect(page.getByTestId("sec-last-audit")).toContainText(`${expectedRows} rows`);
     });
-    const since = new Date().toISOString();
-
-    await login(page);
-    await page.getByTestId("sec-filter-from").fill(fromDateStr());
-    await page.getByTestId("sec-filter-to").fill(toDateStr());
-    await page.getByTestId("sec-refresh").click();
-    await expect(page.getByTestId("sec-row-count")).not.toContainText(/^0 rows/);
-
-    await Promise.all([
-      page.waitForEvent("download"),
-      page.getByTestId("sec-export-csv").click(),
-    ]);
-
-    // Poll for the audit row (RPC write is fire-and-forget).
-    let row: { action: string; details: Record<string, unknown> } | undefined;
-    const deadline = Date.now() + 10_000;
-    while (Date.now() < deadline && !row) {
-      const { data } = await admin
-        .from("audit_logs")
-        .select("action, details, created_at")
-        .eq("action", "security_analytics_export")
-        .gte("created_at", since)
-        .order("created_at", { ascending: false })
-        .limit(1);
-      row = (data ?? [])[0] as typeof row;
-      if (!row) await new Promise((r) => setTimeout(r, 500));
-    }
-    expect(row, "expected a security_analytics_export audit entry").toBeTruthy();
-    expect(row!.details).toMatchObject({ granularity: "day" });
-    expect(typeof (row!.details as { rows?: number }).rows).toBe("number");
-
-    // And the UI reflects the trail.
-    await expect(page.getByTestId("sec-last-audit")).toContainText(/Last export: security_analytics_export/);
-  });
+  }
 });
+
 
