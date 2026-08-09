@@ -134,7 +134,17 @@ Deno.test({
       throttled >= BURST - PHONE_LIMIT - REFILL_TOLERANCE,
       `phone #${i}: expected at least ${BURST - PHONE_LIMIT - REFILL_TOLERANCE} throttled, got ${throttled}`,
     );
+
+    // Every throttled response advertises Retry-After / X-RateLimit-* headers.
+    res.filter((r) => r.denied).forEach((r, j) => {
+      const scope = assertRateLimitHeaders(r.headers, `phone #${i} denial #${j}`);
+      assert(
+        ["ussd-ip", "ussd-phone"].includes(scope),
+        `phone #${i}: main-menu denial should come from ussd-ip/ussd-phone, got "${scope}"`,
+      );
+    });
   });
+
 
   for (let i = 0; i < phones.length; i++) {
     const hash = hashes[i];
