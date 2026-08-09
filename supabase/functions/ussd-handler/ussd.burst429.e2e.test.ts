@@ -3,7 +3,7 @@
 // scope, hashed phone and menu_path. Complements ussd.securityevents.e2e.test.ts
 // (which covers ussd-donate + ussd-clinic sub-flow scopes).
 import "https://deno.land/std@0.224.0/dotenv/load.ts";
-import { assert } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 import { flushSecurityEvents, sha256Hex } from "../_shared/securityLog.ts";
 
@@ -46,14 +46,26 @@ Deno.test({
   const since = new Date(Date.now() - 5_000).toISOString();
 
   // ussd-phone bucket = 30/min. Fire 45 hits at the main menu ('') to trip it.
-  const responses: { status: number; text: string }[] = [];
+  const responses: { status: number; text: string; headers: Headers }[] = [];
   for (let i = 0; i < 45; i++) {
     const res = await fetch(URL_FN, { method: "POST", headers: { apikey: ANON_KEY }, body: payload("", phone) });
-    responses.push({ status: res.status, text: await res.text() });
+    responses.push({ status: res.status, text: await res.text(), headers: res.headers });
   }
 
   const denied = responses.filter((r) => /Too many requests/.test(r.text));
   assert(denied.length > 0, `expected some throttled responses, got ${denied.length}`);
+
+  // Throttled responses must advertise the standard rate-limit headers.
+  const SCOPE_LIMITS: Record<string, string> = { "ussd-ip": "120", "ussd-phone": "30" };
+  denied.forEach((r, i) => {
+    const retry = r.headers.get("Retry-After");
+    assert(retry !== null && /^\d+$/.test(retry) && Number(retry) > 0, `denial #${i}: bad Retry-After "${retry}"`);
+    const scope = r.headers.get("X-RateLimit-Scope");
+    assert(scope !== null && scope in SCOPE_LIMITS, `denial #${i}: unexpected X-RateLimit-Scope "${scope}"`);
+    assertEquals(r.headers.get("X-RateLimit-Limit"), SCOPE_LIMITS[scope!], `denial #${i}: X-RateLimit-Limit`);
+    assertEquals(r.headers.get("X-RateLimit-Remaining"), "0", `denial #${i}: X-RateLimit-Remaining`);
+  });
+
 
   const count = await waitForCount(async () => {
     const { count } = await admin
