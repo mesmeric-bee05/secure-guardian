@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 import { z } from "https://esm.sh/zod@3.23.8";
 import { getClientIP, getCorsHeaders, rejectDisallowedOrigin } from "../_shared/cors.ts";
-import { enforceLimits } from "../_shared/rateLimit.ts";
+import { enforceLimits, rateLimitHeaders } from "../_shared/rateLimit.ts";
 import { logSecurityEventSync, sha256Hex, withSecurityEventFlush } from "../_shared/securityLog.ts";
 
 const USSD_RESPONSE_HEADERS = { 'Content-Type': 'text/plain' };
@@ -221,12 +221,20 @@ serve(withSecurityEventFlush(async (req) => {
       scope: 'ussd-ip', ip: getClientIP(req), ipLimitPerMin: 120, corsHeaders,
       menuPath, userIdHash: phoneHash,
     });
-    if (ipLimited) return new Response('END Too many requests.', { headers: corsHeaders });
+    if (ipLimited) {
+      return new Response('END Too many requests.', {
+        headers: { ...corsHeaders, ...rateLimitHeaders(ipLimited) },
+      });
+    }
     const phoneLimited = await enforceLimits({
       scope: 'ussd-phone', ip: phoneNumber, ipLimitPerMin: 30, corsHeaders,
       menuPath, userIdHash: phoneHash,
     });
-    if (phoneLimited) return new Response('END Too many requests. Please try again later.', { headers: corsHeaders });
+    if (phoneLimited) {
+      return new Response('END Too many requests. Please try again later.', {
+        headers: { ...corsHeaders, ...rateLimitHeaders(phoneLimited) },
+      });
+    }
 
     console.log('USSD request:', { sessionId: sessionId.slice(0, 8) + '...', inputLength: text.length });
 
