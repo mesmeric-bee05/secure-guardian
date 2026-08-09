@@ -5,6 +5,7 @@
 // secrets stay green.
 import { test, expect } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
+import { readFileSync } from "node:fs";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
 const ANON = process.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? process.env.SUPABASE_ANON_KEY ?? "";
