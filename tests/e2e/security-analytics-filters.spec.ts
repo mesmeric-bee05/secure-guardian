@@ -229,7 +229,7 @@ test.describe("Security Analytics — filters + CSV", () => {
 
 
   for (const bucket of ["day", "hour"] as const) {
-    test(`admin CSV export (${bucket} bucket) writes an audit_logs entry matching the export`, async ({ page }) => {
+    test(`admin CSV export (${bucket} bucket) matches the CSV format and writes an audit_logs entry`, async ({ page }, testInfo) => {
       const admin = createClient(SUPABASE_URL, SERVICE, {
         auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
       });
@@ -246,10 +246,13 @@ test.describe("Security Analytics — filters + CSV", () => {
       await expect(page.getByTestId("sec-row-count")).not.toContainText(/^0 rows/);
       const expectedRows = await uiRowCount(page);
 
-      await Promise.all([
+      const [download] = await Promise.all([
         page.waitForEvent("download"),
         page.getByTestId("sec-export-csv").click(),
       ]);
+      const csv = await readDownload(download, testInfo, `export-${bucket}`);
+      assertCsvShape(csv, bucket, expectedRows);
+
 
       // Poll for the audit row (RPC write is fire-and-forget).
       type AuditRow = {
