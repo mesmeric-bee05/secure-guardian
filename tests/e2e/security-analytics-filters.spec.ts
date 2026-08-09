@@ -182,7 +182,7 @@ test.describe("Security Analytics — filters + CSV", () => {
     await expect(page.getByTestId("sec-row-count")).toContainText(/(6|[7-9]|\d{2,}) rows/);
   });
 
-  test("CSV export contents reflect active filters", async ({ page }) => {
+  test("CSV export contents reflect active filters", async ({ page }, testInfo) => {
     await login(page);
     await page.getByTestId("sec-filter-from").fill(fromDateStr());
     await page.getByTestId("sec-filter-to").fill(toDateStr());
@@ -196,12 +196,9 @@ test.describe("Security Analytics — filters + CSV", () => {
       page.waitForEvent("download"),
       page.getByTestId("sec-export-csv").click(),
     ]);
-    const stream = await download.createReadStream();
-    const chunks: Buffer[] = [];
-    for await (const c of stream!) chunks.push(c as Buffer);
-    const csv = Buffer.concat(chunks).toString("utf8").trim();
+    const csv = (await readDownload(download, testInfo, "filtered-export")).trim();
     const [header, ...body] = csv.split("\n");
-    expect(header).toBe("bucket,event_type,count");
+    expect(header).toBe(HEADER);
     expect(body.length).toBeGreaterThan(0);
     let total = 0;
     for (const line of body) {
@@ -214,9 +211,7 @@ test.describe("Security Analytics — filters + CSV", () => {
     expect(csv).not.toContain("auth_failed");
   });
 
-
-
-  test("no-match filter shows zero rows and exports a header-only CSV", async ({ page }) => {
+  test("no-match filter shows zero rows and exports a header-only CSV", async ({ page }, testInfo) => {
     await login(page);
     await page.getByTestId("sec-filter-from").fill(fromDateStr());
     await page.getByTestId("sec-filter-to").fill(toDateStr());
@@ -228,12 +223,10 @@ test.describe("Security Analytics — filters + CSV", () => {
       page.waitForEvent("download"),
       page.getByTestId("sec-export-csv").click(),
     ]);
-    const stream = await download.createReadStream();
-    const chunks: Buffer[] = [];
-    for await (const c of stream!) chunks.push(c as Buffer);
-    const csv = Buffer.concat(chunks).toString("utf8").trim();
-    expect(csv).toBe("bucket,event_type,count");
+    const csv = (await readDownload(download, testInfo, "no-match-export")).trim();
+    expect(csv).toBe(HEADER);
   });
+
 
   for (const bucket of ["day", "hour"] as const) {
     test(`admin CSV export (${bucket} bucket) writes an audit_logs entry matching the export`, async ({ page }) => {
