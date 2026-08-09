@@ -184,6 +184,11 @@ Deno.test({
   const served = res.filter((r) => !r.denied).length;
   assertEquals(served + throttled, BURST, "every donate-branch request must be served or throttled");
   assert(throttled > 0, `expected throttled donate-branch responses, got ${throttled}`);
+  res.filter((r) => r.denied).forEach((r, j) => {
+    assertRateLimitHeaders(r.headers, `donate denial #${j}`);
+  });
+
+
 
   const rows = await waitForEvents(hash, since);
   assert(rows.length > 0, "expected persisted rate_limit_429 rows for the donate burst");
