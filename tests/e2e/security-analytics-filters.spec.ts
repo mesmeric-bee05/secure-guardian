@@ -115,6 +115,52 @@ test.describe("Security Analytics — filters + CSV", () => {
     return Number(m[1]);
   }
 
+  // Read a download's bytes AND persist it under the Playwright output dir so
+  // CI can upload the exact exported file as a debugging artifact.
+  async function readDownload(
+    download: import("@playwright/test").Download,
+    testInfo: import("@playwright/test").TestInfo,
+    label: string,
+  ): Promise<string> {
+    const target = testInfo.outputPath(`downloads/${label}.csv`);
+    await download.saveAs(target);
+    return readFileSync(target, "utf8");
+  }
+
+  const HEADER = "bucket,event_type,count";
+
+  // Validate CSV header columns + per-row field formats for a given bucket.
+  function assertCsvShape(csv: string, bucket: "day" | "hour", expectedRows?: number) {
+    expect(csv.charCodeAt(0)).not.toBe(0xfeff); // no BOM
+    expect(csv).not.toMatch(/\n\s*\n/); // no blank lines
+    const lines = csv.replace(/\r\n/g, "\n").trim().split("\n");
+    expect(lines[0]).toBe(HEADER);
+    const body = lines.slice(1);
+    if (typeof expectedRows === "number") expect(body.length).toBe(expectedRows);
+
+    const bucketRe = bucket === "day"
+      ? /^\d{4}-\d{2}-\d{2}$/
+      : /^\d{4}-\d{2}-\d{2}[ T]\d{2}:00(:00)?/;
+    const fromMs = new Date(`${fromDateStr()}T00:00:00.000Z`).getTime();
+    const toMs = new Date(`${toDateStr()}T23:59:59.999Z`).getTime();
+
+    for (const line of body) {
+      const fields = line.split(",");
+      expect(fields, `row must have exactly 3 fields: "${line}"`).toHaveLength(3);
+      const [bucketVal, evt, cnt] = fields;
+      expect(bucketVal, `bucket field format for ${bucket}: "${bucketVal}"`).toMatch(bucketRe);
+      const parsed = new Date(bucketVal.replace(" ", "T"));
+      expect(Number.isNaN(parsed.getTime())).toBe(false);
+      expect(parsed.getTime()).toBeGreaterThanOrEqual(fromMs - 24 * 60 * 60 * 1000);
+      expect(parsed.getTime()).toBeLessThanOrEqual(toMs);
+      expect(evt).toMatch(/^[a-z0-9_]+$/);
+      expect(cnt).toMatch(/^\d+$/);
+      expect(Number(cnt)).toBeGreaterThanOrEqual(1);
+    }
+  }
+
+
+
 
   test("filters by event_type + menu_path aggregate to the right count", async ({ page }) => {
     await login(page);
