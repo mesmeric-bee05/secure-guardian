@@ -39,11 +39,41 @@ function payload(text: string, phone: string) {
 
 const DENIED_RE = /Too many requests|Too many (clinic lookups|donation attempts)/;
 
+const USSD_SCOPES = ["ussd-ip", "ussd-phone", "ussd-clinic", "ussd-donate"];
+const SCOPE_LIMITS: Record<string, number> = {
+  "ussd-ip": 120,
+  "ussd-phone": 30,
+  "ussd-clinic": 60,
+  "ussd-donate": 30,
+};
+
+/** Every throttled USSD response must carry usable rate-limit headers. */
+function assertRateLimitHeaders(headers: Headers, label: string) {
+  const retry = headers.get("Retry-After");
+  assert(retry !== null, `${label}: Retry-After header missing on a throttled response`);
+  assert(/^\d+$/.test(retry!), `${label}: Retry-After must be an integer, got "${retry}"`);
+  assert(Number(retry) > 0, `${label}: Retry-After must be positive, got ${retry}`);
+
+  const scope = headers.get("X-RateLimit-Scope");
+  assert(scope !== null, `${label}: X-RateLimit-Scope header missing`);
+  assert(USSD_SCOPES.includes(scope!), `${label}: unexpected X-RateLimit-Scope "${scope}"`);
+
+  const limit = headers.get("X-RateLimit-Limit");
+  assertEquals(limit, String(SCOPE_LIMITS[scope!]), `${label}: X-RateLimit-Limit for scope ${scope}`);
+
+  const remaining = headers.get("X-RateLimit-Remaining");
+  assert(remaining !== null && /^\d+$/.test(remaining), `${label}: X-RateLimit-Remaining must be an integer`);
+  assertEquals(Number(remaining), 0, `${label}: a throttled response must report 0 remaining`);
+  return scope!;
+}
+
 async function hit(phone: string, text = "") {
   const res = await fetch(URL_FN, { method: "POST", headers: { apikey: ANON_KEY }, body: payload(text, phone) });
   const body = await res.text();
-  return { status: res.status, text: body, denied: DENIED_RE.test(body) };
+  const denied = DENIED_RE.test(body);
+  return { status: res.status, text: body, denied, headers: res.headers };
 }
+
 
 async function burst(phone: string, n: number, text = "") {
   const out: Awaited<ReturnType<typeof hit>>[] = [];
