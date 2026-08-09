@@ -310,7 +310,7 @@ serve(withSecurityEventFlush(async (req) => {
             language === 'en'
               ? 'END Too many clinic lookups. Please try again in a minute.'
               : 'END Maombi mengi ya kliniki. Tafadhali jaribu tena baada ya dakika moja.',
-            { headers: corsHeaders },
+            { headers: { ...corsHeaders, ...rateLimitHeaders(clinicLimited) } },
           );
         }
         response = language === 'en'
@@ -382,7 +382,7 @@ Weka kiasi cha KSh (10-70000):`;
             language === 'en'
               ? 'END Too many donation attempts. Please try again in a minute.'
               : 'END Majaribio mengi ya mchango. Tafadhali jaribu tena baada ya dakika moja.',
-            { headers: corsHeaders },
+            { headers: { ...corsHeaders, ...rateLimitHeaders(donateLimited) } },
           );
         }
         const parsed = DonateAmountSchema.safeParse(lastInput);
