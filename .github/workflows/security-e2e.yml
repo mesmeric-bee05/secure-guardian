@@ -87,12 +87,26 @@ jobs:
         if: always()
         run: node scripts/assert-no-skips.mjs playwright-results.json
 
+      - name: Upload Playwright artifacts (report, traces, screenshots, CSVs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-e2e-playwright
+          path: |
+            playwright-report-e2e/
+            test-results-e2e/
+            playwright-results.json
+            /tmp/vite.log
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Stop dev server
         if: always()
         run: |
           if [ -f /tmp/vite.pid ]; then kill "$(cat /tmp/vite.pid)" || true; fi
 
       - name: Run USSD edge-function Deno e2e tests
+        if: always()
         run: |
           set -o pipefail
           deno test --allow-net --allow-env --allow-read --no-check \
@@ -106,12 +120,12 @@ jobs:
             exit 1
           fi
 
-      - name: Upload Playwright report
+      - name: Upload USSD Deno test log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: security-e2e-report
-          path: |
-            playwright-report/
-            playwright-results.json
+          name: security-e2e-ussd-deno-log
+          path: /tmp/deno-ussd.log
           if-no-files-found: ignore
+          retention-days: 14
+

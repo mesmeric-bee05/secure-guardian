@@ -6,6 +6,7 @@
 import { test, expect } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 
+
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
 const ANON = process.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? process.env.SUPABASE_ANON_KEY ?? "";
 const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -115,6 +116,52 @@ test.describe("Security Analytics — filters + CSV", () => {
     return Number(m[1]);
   }
 
+  // Read a download's bytes AND persist it under the Playwright output dir so
+  // CI can upload the exact exported file as a debugging artifact.
+  async function readDownload(
+    download: import("@playwright/test").Download,
+    testInfo: import("@playwright/test").TestInfo,
+    label: string,
+  ): Promise<string> {
+    const target = testInfo.outputPath(`downloads/${label}.csv`);
+    await download.saveAs(target);
+    return readFileSync(target, "utf8");
+  }
+
+  const HEADER = "bucket,event_type,count";
+
+  // Validate CSV header columns + per-row field formats for a given bucket.
+  function assertCsvShape(csv: string, bucket: "day" | "hour", expectedRows?: number) {
+    expect(csv.charCodeAt(0)).not.toBe(0xfeff); // no BOM
+    expect(csv).not.toMatch(/\n\s*\n/); // no blank lines
+    const lines = csv.replace(/\r\n/g, "\n").trim().split("\n");
+    expect(lines[0]).toBe(HEADER);
+    const body = lines.slice(1);
+    if (typeof expectedRows === "number") expect(body.length).toBe(expectedRows);
+
+    const bucketRe = bucket === "day"
+      ? /^\d{4}-\d{2}-\d{2}$/
+      : /^\d{4}-\d{2}-\d{2}[ T]\d{2}:00(:00)?/;
+    const fromMs = new Date(`${fromDateStr()}T00:00:00.000Z`).getTime();
+    const toMs = new Date(`${toDateStr()}T23:59:59.999Z`).getTime();
+
+    for (const line of body) {
+      const fields = line.split(",");
+      expect(fields, `row must have exactly 3 fields: "${line}"`).toHaveLength(3);
+      const [bucketVal, evt, cnt] = fields;
+      expect(bucketVal, `bucket field format for ${bucket}: "${bucketVal}"`).toMatch(bucketRe);
+      const parsed = new Date(bucketVal.replace(" ", "T"));
+      expect(Number.isNaN(parsed.getTime())).toBe(false);
+      expect(parsed.getTime()).toBeGreaterThanOrEqual(fromMs - 24 * 60 * 60 * 1000);
+      expect(parsed.getTime()).toBeLessThanOrEqual(toMs);
+      expect(evt).toMatch(/^[a-z0-9_]+$/);
+      expect(cnt).toMatch(/^\d+$/);
+      expect(Number(cnt)).toBeGreaterThanOrEqual(1);
+    }
+  }
+
+
+
 
   test("filters by event_type + menu_path aggregate to the right count", async ({ page }) => {
     await login(page);
@@ -135,7 +182,7 @@ test.describe("Security Analytics — filters + CSV", () => {
     await expect(page.getByTestId("sec-row-count")).toContainText(/(6|[7-9]|\d{2,}) rows/);
   });
 
-  test("CSV export contents reflect active filters", async ({ page }) => {
+  test("CSV export contents reflect active filters", async ({ page }, testInfo) => {
     await login(page);
     await page.getByTestId("sec-filter-from").fill(fromDateStr());
     await page.getByTestId("sec-filter-to").fill(toDateStr());
@@ -149,12 +196,9 @@ test.describe("Security Analytics — filters + CSV", () => {
       page.waitForEvent("download"),
       page.getByTestId("sec-export-csv").click(),
     ]);
-    const stream = await download.createReadStream();
-    const chunks: Buffer[] = [];
-    for await (const c of stream!) chunks.push(c as Buffer);
-    const csv = Buffer.concat(chunks).toString("utf8").trim();
+    const csv = (await readDownload(download, testInfo, "filtered-export")).trim();
     const [header, ...body] = csv.split("\n");
-    expect(header).toBe("bucket,event_type,count");
+    expect(header).toBe(HEADER);
     expect(body.length).toBeGreaterThan(0);
     let total = 0;
     for (const line of body) {
@@ -167,9 +211,7 @@ test.describe("Security Analytics — filters + CSV", () => {
     expect(csv).not.toContain("auth_failed");
   });
 
-
-
-  test("no-match filter shows zero rows and exports a header-only CSV", async ({ page }) => {
+  test("no-match filter shows zero rows and exports a header-only CSV", async ({ page }, testInfo) => {
     await login(page);
     await page.getByTestId("sec-filter-from").fill(fromDateStr());
     await page.getByTestId("sec-filter-to").fill(toDateStr());
@@ -181,15 +223,13 @@ test.describe("Security Analytics — filters + CSV", () => {
       page.waitForEvent("download"),
       page.getByTestId("sec-export-csv").click(),
     ]);
-    const stream = await download.createReadStream();
-    const chunks: Buffer[] = [];
-    for await (const c of stream!) chunks.push(c as Buffer);
-    const csv = Buffer.concat(chunks).toString("utf8").trim();
-    expect(csv).toBe("bucket,event_type,count");
+    const csv = (await readDownload(download, testInfo, "no-match-export")).trim();
+    expect(csv).toBe(HEADER);
   });
 
+
   for (const bucket of ["day", "hour"] as const) {
-    test(`admin CSV export (${bucket} bucket) writes an audit_logs entry matching the export`, async ({ page }) => {
+    test(`admin CSV export (${bucket} bucket) matches the CSV format and writes an audit_logs entry`, async ({ page }, testInfo) => {
       const admin = createClient(SUPABASE_URL, SERVICE, {
         auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
       });
@@ -206,10 +246,13 @@ test.describe("Security Analytics — filters + CSV", () => {
       await expect(page.getByTestId("sec-row-count")).not.toContainText(/^0 rows/);
       const expectedRows = await uiRowCount(page);
 
-      await Promise.all([
+      const [download] = await Promise.all([
         page.waitForEvent("download"),
         page.getByTestId("sec-export-csv").click(),
       ]);
+      const csv = await readDownload(download, testInfo, `export-${bucket}`);
+      assertCsvShape(csv, bucket, expectedRows);
+
 
       // Poll for the audit row (RPC write is fire-and-forget).
       type AuditRow = {

@@ -117,7 +117,24 @@ export async function enforceLimits(opts: {
         'Retry-After': String(retry),
         'X-RateLimit-Remaining': String(Math.max(0, blocked.remaining)),
         'X-RateLimit-Limit': String(opts.ipLimitPerMin),
+        'X-RateLimit-Scope': opts.scope,
       },
     },
   );
 }
+
+/**
+ * Extract the rate-limit headers from a denial Response produced by
+ * `enforceLimits`, so callers that must answer with their own status/body
+ * (e.g. the USSD gateway, which requires 200 + plain text) can still surface
+ * `Retry-After` / `X-RateLimit-*` to clients and tests.
+ */
+export function rateLimitHeaders(denied: Response): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const name of ['Retry-After', 'X-RateLimit-Remaining', 'X-RateLimit-Limit', 'X-RateLimit-Scope']) {
+    const v = denied.headers.get(name);
+    if (v !== null) out[name] = v;
+  }
+  return out;
+}
+

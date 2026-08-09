@@ -166,5 +166,62 @@ test.describe("Security Analytics — non-admin authorization", () => {
     expect([401, 403, 405]).toContain(getRes.status());
     expect(await getRes.text()).not.toContain(TAG);
   });
+
+  test("non-admin cannot read audit_logs even when they know the row id", async () => {
+    const service = svc();
+    // Seed a known audit row via service_role (bypasses the admin-only RPC).
+    const { data: seeded, error: seedErr } = await service
+      .from("audit_logs")
+      .insert({
+        action: "security_analytics_export",
+        resource_type: "security_events",
+        details: { tag: TAG, granularity: "day", rows: 1 },
+      })
+      .select("id")
+      .single();
+    expect(seedErr).toBeNull();
+    const knownId = seeded!.id as string;
+
+    try {
+      const c = createClient(SUPABASE_URL, ANON, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+      });
+      const { data: signIn, error: signInErr } = await c.auth.signInWithPassword({
+        email: USER_EMAIL,
+        password: USER_PASS,
+      });
+      expect(signInErr).toBeNull();
+      const token = signIn.session!.access_token;
+
+      // 1. Unfiltered select — blocked or empty.
+      const all = await c.from("audit_logs").select("id, action, details").limit(50);
+      expect(all.error ? true : (all.data ?? []).length === 0).toBe(true);
+
+      // 2. Targeted select by the known id — knowing the identifier must not help.
+      const byId = await c.from("audit_logs").select("id, action, details").eq("id", knownId);
+      expect(byId.error ? true : (byId.data ?? []).length === 0).toBe(true);
+
+      // 3. Filter on the seeded tag.
+      const byTag = await c.from("audit_logs").select("id").filter("details->>tag", "eq", TAG);
+      expect(byTag.error ? true : (byTag.data ?? []).length === 0).toBe(true);
+
+      // 4. Raw PostgREST GET with the non-admin bearer token.
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/audit_logs?id=eq.${knownId}&select=*`, {
+        headers: { apikey: ANON, Authorization: `Bearer ${token}` },
+      });
+      expect([200, 401, 403]).toContain(res.status);
+      const body = await res.text();
+      expect(body).not.toContain(TAG);
+      expect(body).not.toContain(knownId);
+      if (res.status === 200) expect(JSON.parse(body)).toEqual([]);
+
+      // Service role still sees it — the table is not simply empty.
+      const { data: asService } = await service.from("audit_logs").select("id").eq("id", knownId);
+      expect((asService ?? []).length).toBe(1);
+    } finally {
+      await service.from("audit_logs").delete().eq("id", knownId);
+    }
+  });
 });
+
 
