@@ -369,6 +369,39 @@ test.describe("Security Analytics — filters + CSV", () => {
       await expect(page.getByTestId("sec-last-audit")).toContainText(`${expectedRows} rows`);
     });
   }
+
+  // The streaming server export is the only path with real HTTP response
+  // headers — prove the MIME type and attachment filename contract there,
+  // for both a day-wide and an hour-wide window.
+  for (const [bucket, hours] of [["day", 24], ["hour", 1]] as const) {
+    test(`streaming export returns CSV content-type and attachment filename (${bucket} window)`, async ({ request }) => {
+      if (!ADMIN_EMAIL || !ADMIN_PASS) test.skip(true, "requires TEST_ADMIN_EMAIL/TEST_ADMIN_PASSWORD");
+      const c = createClient(SUPABASE_URL, ANON, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+      });
+      const { data, error } = await c.auth.signInWithPassword({ email: ADMIN_EMAIL, password: ADMIN_PASS });
+      expect(error).toBeNull();
+      const token = data.session!.access_token;
+
+      const res = await request.post(`${SUPABASE_URL}/functions/v1/security-events-export`, {
+        headers: { apikey: ANON, Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        data: { since: new Date(Date.now() - hours * 60 * 60 * 1000).toISOString() },
+      });
+      expect(res.status()).toBe(200);
+      const headers = res.headers();
+      expect(headers["content-type"]).toContain("text/csv");
+      expect(headers["content-type"]).toContain("charset=utf-8");
+      expect(headers["content-disposition"]).toMatch(
+        /^attachment; filename="security-events-[0-9TZ\-]+\.csv"$/,
+      );
+      expect(headers["x-content-type-options"]).toBe("nosniff");
+      expect(headers["cache-control"]).toContain("no-store");
+
+      const body = await res.text();
+      expect(body.split("\n")[0]).toBe("created_at,event_type,scope,severity,ip_address,user_id,details");
+    });
+  }
 });
+
 
 
