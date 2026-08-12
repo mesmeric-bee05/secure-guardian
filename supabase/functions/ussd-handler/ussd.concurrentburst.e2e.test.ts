@@ -98,6 +98,27 @@ async function eventsForHash(hash: string, since: string): Promise<EventRow[]> {
   return (data ?? []) as EventRow[];
 }
 
+/** ALL security_events for a phone hash — used to prove no extra rows appear. */
+async function allEventsForHash(hash: string, since: string): Promise<EventRow[]> {
+  const { data } = await admin
+    .from("security_events")
+    .select("event_type, scope, details")
+    .gte("created_at", since)
+    .filter("details->>phone_hash", "eq", hash)
+    .limit(500);
+  return (data ?? []) as EventRow[];
+}
+
+/** Throttling is never an admin action — audit_logs must stay untouched. */
+async function assertNoAuditRows(since: string) {
+  const { count } = await admin
+    .from("audit_logs")
+    .select("id", { count: "exact", head: true })
+    .gte("created_at", since)
+    .in("action", ["ussd_rate_limit", "rate_limit_429", "ussd_request"]);
+  assertEquals(count ?? 0, 0, "USSD throttling must not create audit_logs rows");
+}
+
 async function waitForEvents(hash: string, since: string, min = 1, timeoutMs = 10_000): Promise<EventRow[]> {
   const deadline = Date.now() + timeoutMs;
   let rows: EventRow[] = [];
@@ -166,7 +187,27 @@ Deno.test({
     for (const row of rows) {
       assert(!otherHashes.includes(row.details?.phone_hash ?? ""), "429 row leaked another phone's hash");
     }
+
+    // Bounded side-effects: no more logged rows than throttled responses, and
+    // nothing but rate_limit_429 on menu_path "" was written for this phone.
+    const throttled = results[i].filter((r) => r.denied).length;
+    assert(
+      rows.length <= throttled,
+      `phone #${i}: logged ${rows.length} rows for ${throttled} throttled responses`,
+    );
+    const everything = await allEventsForHash(hash, since);
+    for (const row of everything) {
+      assertEquals(row.event_type, "rate_limit_429", `phone #${i}: unexpected event_type ${row.event_type}`);
+      assertEquals(row.details?.menu_path ?? "", "", `phone #${i}: unexpected menu_path`);
+    }
+    assertEquals(
+      everything.length,
+      rows.length,
+      `phone #${i}: extra security_events rows beyond the expected 429s`,
+    );
   }
+
+  await assertNoAuditRows(since);
 
   await flushSecurityEvents();
 });
@@ -198,6 +239,20 @@ Deno.test({
     assertEquals(row.details?.menu_path, "5", "donate-branch 429 must record menu_path '5'");
     assertEquals(row.details?.phone_hash, hash);
   }
+
+  // Bounded side-effects for the donate branch: only rate_limit_429 rows with
+  // menu_path "5", never more than the number of throttled responses.
+  const everything = await allEventsForHash(hash, since);
+  assertEquals(everything.length, rows.length, "extra security_events rows beyond the donate 429s");
+  for (const row of everything) {
+    assertEquals(row.event_type, "rate_limit_429");
+    assertEquals(row.details?.menu_path, "5");
+  }
+  assert(
+    rows.length <= throttled,
+    `logged ${rows.length} rows for ${throttled} throttled donate responses`,
+  );
+  await assertNoAuditRows(since);
 
   await flushSecurityEvents();
 });

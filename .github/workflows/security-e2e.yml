@@ -79,14 +79,13 @@ jobs:
           echo "Dev server failed to start"; tail -n 100 /tmp/vite.log; exit 1
 
       - name: Run Security Analytics Playwright e2e
+        id: playwright
+        continue-on-error: true
         run: |
           bunx playwright test --config=playwright.e2e.config.ts \
             --reporter=json > playwright-results.json
 
-      - name: Fail if any e2e test was skipped
-        if: always()
-        run: node scripts/assert-no-skips.mjs playwright-results.json
-
+      # Upload BEFORE the skip gate so artifacts exist even when the gate fails.
       - name: Upload Playwright artifacts (report, traces, screenshots, CSVs)
         if: always()
         uses: actions/upload-artifact@v4
@@ -99,6 +98,17 @@ jobs:
             /tmp/vite.log
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Fail if any e2e test was skipped
+        if: always()
+        run: node scripts/assert-no-skips.mjs playwright-results.json
+
+      - name: Fail if Playwright reported failures
+        if: always() && steps.playwright.outcome == 'failure'
+        run: |
+          echo "::error::Playwright security e2e suite failed"
+          exit 1
+
 
       - name: Stop dev server
         if: always()

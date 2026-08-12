@@ -222,6 +222,95 @@ test.describe("Security Analytics — non-admin authorization", () => {
       await service.from("audit_logs").delete().eq("id", knownId);
     }
   });
+
+  test("non-admin cannot insert or update audit_logs via PostgREST", async () => {
+    const service = svc();
+    const { data: seeded, error: seedErr } = await service
+      .from("audit_logs")
+      .insert({
+        action: "security_analytics_export",
+        resource_type: "security_events",
+        details: { tag: TAG, origin: "seed" },
+      })
+      .select("id, action, details")
+      .single();
+    expect(seedErr).toBeNull();
+    const knownId = seeded!.id as string;
+
+    try {
+      const c = createClient(SUPABASE_URL, ANON, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+      });
+      const { data: signIn, error: signInErr } = await c.auth.signInWithPassword({
+        email: USER_EMAIL,
+        password: USER_PASS,
+      });
+      expect(signInErr).toBeNull();
+      const token = signIn.session!.access_token;
+      const rest = (path: string, init: RequestInit) =>
+        fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+          ...init,
+          headers: {
+            apikey: ANON,
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+            Prefer: "return=representation",
+            ...(init.headers ?? {}),
+          },
+        });
+
+      // 1. Raw INSERT — must be denied, and must not create a row.
+      const insertRes = await rest("audit_logs", {
+        method: "POST",
+        body: JSON.stringify({
+          action: "forged_admin_action",
+          resource_type: "security_events",
+          details: { tag: TAG, origin: "forged" },
+        }),
+      });
+      expect([401, 403, 404, 405, 400]).toContain(insertRes.status);
+      expect(insertRes.status).not.toBe(201);
+      const insertBody = await insertRes.text();
+      expect(insertBody).not.toContain("forged_admin_action");
+
+      // 2. Raw UPDATE on a known id — must be denied / affect nothing.
+      const patchRes = await rest(`audit_logs?id=eq.${knownId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ action: "tampered", details: { tag: TAG, origin: "tampered" } }),
+      });
+      expect([401, 403, 404, 405, 400, 200, 204]).toContain(patchRes.status);
+      const patchBody = await patchRes.text();
+      expect(patchBody).not.toContain("tampered");
+      if (patchRes.status === 200) expect(JSON.parse(patchBody || "[]")).toEqual([]);
+
+      // 3. Same attempts through supabase-js for symmetry.
+      const jsInsert = await c
+        .from("audit_logs")
+        .insert({ action: "forged_js", resource_type: "security_events", details: { tag: TAG } })
+        .select("id");
+      expect(jsInsert.error ? true : (jsInsert.data ?? []).length === 0).toBe(true);
+      const jsUpdate = await c.from("audit_logs").update({ action: "tampered_js" }).eq("id", knownId).select("id");
+      expect(jsUpdate.error ? true : (jsUpdate.data ?? []).length === 0).toBe(true);
+
+      // 4. Nothing changed, and no forged rows exist (service_role view).
+      const { data: after } = await service
+        .from("audit_logs")
+        .select("id, action, details")
+        .eq("id", knownId)
+        .single();
+      expect(after!.action).toBe("security_analytics_export");
+      expect((after!.details as Record<string, unknown>).origin).toBe("seed");
+
+      const { data: forged } = await service
+        .from("audit_logs")
+        .select("id, action")
+        .in("action", ["forged_admin_action", "forged_js", "tampered", "tampered_js"]);
+      expect(forged ?? []).toHaveLength(0);
+    } finally {
+      await service.from("audit_logs").delete().eq("id", knownId);
+    }
+  });
 });
+
 
 

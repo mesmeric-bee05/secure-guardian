@@ -82,15 +82,37 @@ Deno.test({
   // Menu path should be recorded (empty for main menu is still stored as "").
   const { data } = await admin
     .from("security_events")
-    .select("scope, details")
-    .eq("event_type", "rate_limit_429")
+    .select("event_type, scope, details, created_at")
     .gte("created_at", since)
-    .filter("details->>phone_hash", "eq", phoneHash)
-    .limit(5);
-  const row = (data ?? [])[0] as { scope: string; details: { menu_path?: string; phone_hash?: string } } | undefined;
-  assert(row, "expected at least one persisted rate_limit_429 row");
-  assert(typeof row!.details?.menu_path === "string", "menu_path must be present in details");
-  assert(row!.details?.phone_hash === phoneHash, "phone_hash in details must match sha256(phone)");
+    .filter("details->>phone_hash", "eq", phoneHash);
+  const rows = (data ?? []) as {
+    event_type: string;
+    scope: string;
+    details: { menu_path?: string; phone_hash?: string };
+  }[];
+  assert(rows.length > 0, "expected at least one persisted rate_limit_429 row");
+
+  // No side-effects beyond the throttling itself: every row for this phone is a
+  // rate_limit_429 on the main menu, and never more rows than 429 responses.
+  for (const r of rows) {
+    assertEquals(r.event_type, "rate_limit_429", `unexpected event_type ${r.event_type}`);
+    assert(["ussd-ip", "ussd-phone"].includes(r.scope), `unexpected scope ${r.scope}`);
+    assertEquals(r.details?.menu_path ?? "", "", "main-menu burst must log menu_path ''");
+    assertEquals(r.details?.phone_hash, phoneHash, "phone_hash in details must match sha256(phone)");
+  }
+  assert(
+    rows.length <= denied.length,
+    `logged ${rows.length} security_events for ${denied.length} throttled responses — no extra rows expected`,
+  );
+
+  // Throttling is not an admin action: it must not touch audit_logs.
+  const { count: auditCount } = await admin
+    .from("audit_logs")
+    .select("id", { count: "exact", head: true })
+    .gte("created_at", since)
+    .in("action", ["ussd_rate_limit", "rate_limit_429"]);
+  assertEquals(auditCount ?? 0, 0, "USSD throttling must not create audit_logs rows");
+
 
   await flushSecurityEvents();
 });
