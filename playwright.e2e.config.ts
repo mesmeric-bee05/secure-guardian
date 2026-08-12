@@ -8,9 +8,11 @@ export default defineConfig({
   reporter: [["list"], ["html", { outputFolder: "playwright-report-e2e", open: "never" }]],
   use: {
     baseURL: "http://localhost:8080",
-    trace: "retain-on-failure",
-    screenshot: "only-on-failure",
-    video: "retain-on-failure",
+    // Always capture debugging evidence — including for passing runs and runs
+    // that end early — so CI artifacts are never empty when triaging.
+    trace: "on",
+    screenshot: "on",
+    video: "on",
     viewport: { width: 1280, height: 900 },
     acceptDownloads: true,
   },
