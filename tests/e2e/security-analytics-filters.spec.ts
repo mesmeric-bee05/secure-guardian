@@ -119,33 +119,77 @@ test.describe("Security Analytics — filters + CSV", () => {
   }
 
   // Read a download's bytes AND persist it under the Playwright output dir so
-  // CI can upload the exact exported file as a debugging artifact.
+  // CI can upload the exact exported file as a debugging artifact. A small
+  // JSON sidecar records the filters/filename for fast triage.
   async function readDownload(
     download: import("@playwright/test").Download,
     testInfo: import("@playwright/test").TestInfo,
     label: string,
+    meta: Record<string, unknown> = {},
   ): Promise<string> {
     const target = testInfo.outputPath(`downloads/${label}.csv`);
+    mkdirSync(dirname(target), { recursive: true });
     await download.saveAs(target);
-    return readFileSync(target, "utf8");
+    const csv = readFileSync(target, "utf8");
+    writeFileSync(
+      testInfo.outputPath(`downloads/${label}.meta.json`),
+      JSON.stringify(
+        {
+          label,
+          suggestedFilename: download.suggestedFilename(),
+          bytes: Buffer.byteLength(csv, "utf8"),
+          lines: csv.replace(/\r\n/g, "\n").trim().split("\n").length,
+          from: fromDateStr(),
+          to: toDateStr(),
+          ...meta,
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    return csv;
   }
 
   const HEADER = "bucket,event_type,count";
 
-  // Validate CSV header columns + per-row field formats for a given bucket.
-  function assertCsvShape(csv: string, bucket: "day" | "hour", expectedRows?: number) {
+  // The in-app export is a client-side Blob download, so the only observable
+  // "content-disposition" is the suggested filename; the MIME contract is
+  // proven separately against the streaming export endpoint.
+  function assertDownloadName(
+    download: import("@playwright/test").Download,
+    bucket: "day" | "hour",
+  ) {
+    const name = download.suggestedFilename();
+    expect(name, `filename: ${name}`).toMatch(
+      /^security-analytics-\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2}-(day|hour)-[A-Za-z0-9_]+(-[A-Za-z0-9]+)?\.csv$/,
+    );
+    expect(name).toContain(`-${bucket}-`);
+    expect(name).toContain(`${fromDateStr()}_${toDateStr()}`);
+    expect(name.endsWith(".csv")).toBe(true);
+  }
+
+  // Validate CSV header columns, per-row field formats, deterministic ordering
+  // and numeric aggregation for a given bucket.
+  // `expectedEvents` is the number of raw events shown in the UI badge; the CSV
+  // aggregates them into (bucket, event_type) rows, so the *sum of counts*
+  // must equal it.
+  function assertCsvShape(csv: string, bucket: "day" | "hour", expectedEvents?: number) {
     expect(csv.charCodeAt(0)).not.toBe(0xfeff); // no BOM
     expect(csv).not.toMatch(/\n\s*\n/); // no blank lines
     const lines = csv.replace(/\r\n/g, "\n").trim().split("\n");
     expect(lines[0]).toBe(HEADER);
     const body = lines.slice(1);
-    if (typeof expectedRows === "number") expect(body.length).toBe(expectedRows);
 
     const bucketRe = bucket === "day"
       ? /^\d{4}-\d{2}-\d{2}$/
-      : /^\d{4}-\d{2}-\d{2}[ T]\d{2}:00(:00)?/;
+      : /^\d{4}-\d{2}-\d{2}[ T]\d{2}:00(:00)?$/;
     const fromMs = new Date(`${fromDateStr()}T00:00:00.000Z`).getTime();
     const toMs = new Date(`${toDateStr()}T23:59:59.999Z`).getTime();
+
+    let sum = 0;
+    const seen = new Set<string>();
+    const orderKeys: string[] = [];
 
     for (const line of body) {
       const fields = line.split(",");
@@ -154,13 +198,31 @@ test.describe("Security Analytics — filters + CSV", () => {
       expect(bucketVal, `bucket field format for ${bucket}: "${bucketVal}"`).toMatch(bucketRe);
       const parsed = new Date(bucketVal.replace(" ", "T"));
       expect(Number.isNaN(parsed.getTime())).toBe(false);
+      // Bucket boundaries must be aligned to the granularity.
+      if (bucket === "hour") expect(bucketVal).toMatch(/\d{2}:00(:00)?$/);
       expect(parsed.getTime()).toBeGreaterThanOrEqual(fromMs - 24 * 60 * 60 * 1000);
       expect(parsed.getTime()).toBeLessThanOrEqual(toMs);
       expect(evt).toMatch(/^[a-z0-9_]+$/);
       expect(cnt).toMatch(/^\d+$/);
+      expect(Number.isInteger(Number(cnt))).toBe(true);
       expect(Number(cnt)).toBeGreaterThanOrEqual(1);
+
+      // No duplicate (bucket, event_type) pairs.
+      const key = `${bucketVal}|${evt}`;
+      expect(seen.has(key), `duplicate row for ${key}`).toBe(false);
+      seen.add(key);
+      orderKeys.push(key);
+      sum += Number(cnt);
     }
+
+    // Deterministic ordering: bucket ascending, then event_type alphabetically.
+    const sorted = [...orderKeys].sort((a, b) => a.localeCompare(b));
+    expect(orderKeys, "rows must be sorted by bucket then event_type").toEqual(sorted);
+
+    if (typeof expectedEvents === "number") expect(sum).toBe(expectedEvents);
+    return { rows: body.length, sum };
   }
+
 
 
 
