@@ -314,8 +314,23 @@ test.describe("Security Analytics — filters + CSV", () => {
         page.waitForEvent("download"),
         page.getByTestId("sec-export-csv").click(),
       ]);
-      const csv = await readDownload(download, testInfo, `export-${bucket}`);
+      const csv = await readDownload(download, testInfo, `export-${bucket}`, {
+        bucket,
+        uiRowCount: expectedRows,
+      });
+      assertDownloadName(download, bucket);
       assertCsvShape(csv, bucket, expectedRows);
+
+      // Determinism: exporting the same filters again yields identical bytes.
+      const [download2] = await Promise.all([
+        page.waitForEvent("download"),
+        page.getByTestId("sec-export-csv").click(),
+      ]);
+      const csv2 = await readDownload(download2, testInfo, `export-${bucket}-repeat`, { bucket });
+      expect(csv2).toBe(csv);
+      expect(download2.suggestedFilename()).toBe(download.suggestedFilename());
+
+
 
 
       // Poll for the audit row (RPC write is fire-and-forget).
