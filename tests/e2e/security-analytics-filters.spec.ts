@@ -3,6 +3,8 @@
 // LOVABLE_BROWSER_SUPABASE_SESSION_JSON) and SUPABASE_SERVICE_ROLE_KEY
 // to seed rows. Skips gracefully when creds are absent so forks/CI without
 // secrets stay green.
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { test, expect } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 
