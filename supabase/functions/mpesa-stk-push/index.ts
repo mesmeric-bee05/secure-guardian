@@ -184,7 +184,7 @@ serve(async (req) => {
         PartyA: phone,
         PartyB: env.MPESA_SHORTCODE,
         PhoneNumber: phone,
-        CallBackURL: env.MPESA_CALLBACK_URL,
+        CallBackURL: callbackUrl,
         AccountReference: (reference || "MediReachPlus").slice(0, 12),
         TransactionDesc: "MediReach+ donation",
       }),
