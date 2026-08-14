@@ -239,9 +239,10 @@ test.describe("Security Analytics — filters + CSV", () => {
 
     // Every bucket label in the file uses one consistent UTC format.
     expect(
-      [...bucketFormats],
-      "all bucket timestamps must share one UTC format",
-    ).toHaveLength(Math.min(bucketFormats.size, 1));
+      bucketFormats.size,
+      `all bucket timestamps must share one UTC format, saw: ${[...bucketFormats].join(" | ")}`,
+    ).toBeLessThanOrEqual(1);
+
 
     // Deterministic ordering: bucket ascending, then event_type alphabetically.
     const sorted = [...orderKeys].sort((a, b) => a.localeCompare(b));
