@@ -154,7 +154,7 @@ Deno.test({
 // Regression: token rejection + audit trail for every rejected attempt.
 // ---------------------------------------------------------------------------
 
-async function latestRejection(admin: ReturnType<typeof createClient>, since: string) {
+async function latestRejection(admin: any, since: string) {
   const deadline = Date.now() + 8000;
   while (Date.now() < deadline) {
     const { data } = await admin
