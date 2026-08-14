@@ -50,6 +50,7 @@ function checkVars(env: Record<string, string | undefined>): CheckRow[] {
     ok: v.length >= 24,
     hint: v.length >= 24 ? "OK" : "Expected ≥24 chars",
   }));
+
   push("MPESA_ENV", (v) => ({
     ok: v === "sandbox" || v === "production",
     hint: v === "sandbox" || v === "production" ? v : "Must be sandbox|production",
@@ -125,6 +126,16 @@ serve(async (req) => {
     const allValid = rows.every((r) => r.set && r.valid);
     const ready = allValid;
 
+    // Rotation state for the callback shared secret (values are never leaked).
+    const currentToken = Deno.env.get("MPESA_CALLBACK_TOKEN") ?? "";
+    const previousToken = Deno.env.get("MPESA_CALLBACK_TOKEN_PREVIOUS") ?? "";
+    const rotation = {
+      current_set: Boolean(currentToken),
+      previous_set: Boolean(previousToken),
+      overlap_open: Boolean(currentToken && previousToken),
+      identical: Boolean(currentToken && previousToken && currentToken === previousToken),
+    };
+
     // Public callers get booleans only; admins additionally get a live Daraja probe.
     const probe = isAdmin ? await probeDaraja(env) : undefined;
 
@@ -134,9 +145,11 @@ serve(async (req) => {
           ready,
           mode: env.MPESA_ENV ?? "unset",
           checks: rows,
+          callback_token_rotation: rotation,
           probe,
           verified_at: new Date().toISOString(),
         };
+
 
     return new Response(JSON.stringify(payload), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

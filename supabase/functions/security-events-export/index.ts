@@ -76,10 +76,19 @@ serve(async (req) => {
 
     const svc = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
 
-    // Admin gate
+    // Admin gate — denials are logged to security_events AND audit_logs so the
+    // attempt is provable in the tamper-evident audit chain.
     const { data: isAdmin, error: roleErr } = await svc.rpc("is_admin", { _user_id: userId });
     if (roleErr || !isAdmin) {
       logSecurityEvent({ event_type: "auth_failed", scope: "security-events-export", ip_address: ip, user_id: userId, severity: "critical", details: { reason: "not_admin" } });
+      const { error: auditErr } = await svc.from("audit_logs").insert({
+        user_id: userId,
+        action: "security_events_export_denied",
+        resource_type: "security_events",
+        ip_address: ip,
+        details: { reason: roleErr ? "role_lookup_failed" : "not_admin" },
+      });
+      if (auditErr) console.error("audit_logs denial insert:", auditErr.message);
       return new Response(JSON.stringify({ error: "Forbidden" }), {
         status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -89,6 +98,7 @@ serve(async (req) => {
     if (!parsed.ok || !parsed.data) {
       return badRequest(parsed.error!, corsHeaders, { scope: "security-events-export", ip, userId }, parsed.issues);
     }
+
     const f = parsed.data;
 
     const buildQuery = (cursor: { ts: string; id: string } | null) => {

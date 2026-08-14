@@ -181,11 +181,14 @@ test.describe("Security Analytics — filters + CSV", () => {
     expect(lines[0]).toBe(HEADER);
     const body = lines.slice(1);
 
+    // Bucket labels are produced from toISOString(), so they are UTC by
+    // construction: `YYYY-MM-DD` for day and `YYYY-MM-DDTHH:00` for hour.
     const bucketRe = bucket === "day"
       ? /^\d{4}-\d{2}-\d{2}$/
-      : /^\d{4}-\d{2}-\d{2}[ T]\d{2}:00(:00)?$/;
+      : /^\d{4}-\d{2}-\d{2}T\d{2}:00$/;
     const fromMs = new Date(`${fromDateStr()}T00:00:00.000Z`).getTime();
     const toMs = new Date(`${toDateStr()}T23:59:59.999Z`).getTime();
+    const bucketFormats = new Set<string>();
 
     let sum = 0;
     const seen = new Set<string>();
@@ -196,12 +199,31 @@ test.describe("Security Analytics — filters + CSV", () => {
       expect(fields, `row must have exactly 3 fields: "${line}"`).toHaveLength(3);
       const [bucketVal, evt, cnt] = fields;
       expect(bucketVal, `bucket field format for ${bucket}: "${bucketVal}"`).toMatch(bucketRe);
-      const parsed = new Date(bucketVal.replace(" ", "T"));
-      expect(Number.isNaN(parsed.getTime())).toBe(false);
-      // Bucket boundaries must be aligned to the granularity.
-      if (bucket === "hour") expect(bucketVal).toMatch(/\d{2}:00(:00)?$/);
-      expect(parsed.getTime()).toBeGreaterThanOrEqual(fromMs - 24 * 60 * 60 * 1000);
-      expect(parsed.getTime()).toBeLessThanOrEqual(toMs);
+      // Every bucket in one export must share the exact same shape (no mixed
+      // local/UTC or mixed separators).
+      bucketFormats.add(
+        bucketVal.replace(/\d/g, "N"),
+      );
+      // Parsing as explicit UTC must round-trip to the same label — this fails
+      // if the value were ever rendered in a local timezone.
+      const utcIso = bucket === "day"
+        ? `${bucketVal}T00:00:00.000Z`
+        : `${bucketVal}:00.000Z`;
+      const parsed = new Date(utcIso);
+      expect(Number.isNaN(parsed.getTime()), `unparseable UTC bucket "${bucketVal}"`).toBe(false);
+      const roundTrip = bucket === "day"
+        ? parsed.toISOString().slice(0, 10)
+        : `${parsed.toISOString().slice(0, 13)}:00`;
+      expect(roundTrip, `bucket "${bucketVal}" is not a UTC-normalised label`).toBe(bucketVal);
+      // Bucket boundaries must be aligned to the granularity, in UTC.
+      expect(parsed.getUTCSeconds()).toBe(0);
+      expect(parsed.getUTCMilliseconds()).toBe(0);
+      expect(parsed.getUTCMinutes()).toBe(0);
+      if (bucket === "day") expect(parsed.getUTCHours()).toBe(0);
+      // …and inside the selected day/hour window (inclusive), in UTC.
+      expect(parsed.getTime(), `bucket "${bucketVal}" before selected window`).toBeGreaterThanOrEqual(fromMs);
+      expect(parsed.getTime(), `bucket "${bucketVal}" after selected window`).toBeLessThanOrEqual(toMs);
+
       expect(evt).toMatch(/^[a-z0-9_]+$/);
       expect(cnt).toMatch(/^\d+$/);
       expect(Number.isInteger(Number(cnt))).toBe(true);
@@ -215,9 +237,17 @@ test.describe("Security Analytics — filters + CSV", () => {
       sum += Number(cnt);
     }
 
+    // Every bucket label in the file uses one consistent UTC format.
+    expect(
+      bucketFormats.size,
+      `all bucket timestamps must share one UTC format, saw: ${[...bucketFormats].join(" | ")}`,
+    ).toBeLessThanOrEqual(1);
+
+
     // Deterministic ordering: bucket ascending, then event_type alphabetically.
     const sorted = [...orderKeys].sort((a, b) => a.localeCompare(b));
     expect(orderKeys, "rows must be sorted by bucket then event_type").toEqual(sorted);
+
 
     if (typeof expectedEvents === "number") expect(sum).toBe(expectedEvents);
     return { rows: body.length, sum };

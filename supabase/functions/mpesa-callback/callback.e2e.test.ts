@@ -149,3 +149,162 @@ Deno.test({
   assertEquals(row?.status, "failed");
   await admin.from("donations").delete().eq("checkout_request_id", checkoutId);
 });
+
+// ---------------------------------------------------------------------------
+// Regression: token rejection + audit trail for every rejected attempt.
+// ---------------------------------------------------------------------------
+
+async function latestRejection(admin: any, since: string) {
+  const deadline = Date.now() + 8000;
+  while (Date.now() < deadline) {
+    const { data } = await admin
+      .from("audit_logs")
+      .select("action, resource_type, resource_id, details, created_at")
+      .eq("action", "mpesa_callback_rejected")
+      .gte("created_at", since)
+      .order("created_at", { ascending: false })
+      .limit(5);
+    if (data && data.length) return data as Array<{ details: Record<string, unknown>; resource_id: string | null }>;
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  return [];
+}
+
+for (const variant of ["no token", "empty token", "wrong token", "wrong header token"] as const) {
+  Deno.test({ ...opts, name: `mpesa-callback: rejects callback with ${variant}` }, async () => {
+    const url = variant === "no token"
+      ? URL_FN_NOTOKEN
+      : variant === "empty token"
+      ? `${URL_FN_NOTOKEN}?token=`
+      : variant === "wrong token"
+      ? `${URL_FN_NOTOKEN}?token=definitely-not-the-real-token`
+      : URL_FN_NOTOKEN;
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (variant === "wrong header token") headers["x-callback-token"] = "nope-nope-nope";
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: stkBody(`spoof-${crypto.randomUUID()}`, 0, { MpesaReceiptNumber: "FAKE", Amount: 1 }),
+    });
+    assert(res.status === 401 || res.status === 503, `expected 401/503, got ${res.status}`);
+    const body = await res.json();
+    assert(body.ResultDesc === "Unauthorized" || body.ResultDesc === "Not configured");
+    // The rejection body must never echo a token value.
+    assert(!JSON.stringify(body).includes("token="), "response leaked a token");
+  });
+}
+
+Deno.test({
+  ...opts,
+  name: "mpesa-callback: a spoofed callback cannot change a pending donation and is audited",
+  ignore: !SERVICE_KEY,
+}, async () => {
+  const admin = createClient(SUPABASE_URL, SERVICE_KEY!, { auth: { persistSession: false } });
+  const checkoutId = `test-${crypto.randomUUID()}`;
+  const { data: anyUser } = await admin.from("user_roles").select("user_id").limit(1).single();
+  if (!anyUser) return;
+  await admin.from("donations").insert({
+    user_id: anyUser.user_id, amount_kes: 75, phone_msisdn: "254712345678",
+    status: "pending", checkout_request_id: checkoutId,
+  });
+  const since = new Date().toISOString();
+
+  const res = await fetch(`${URL_FN_NOTOKEN}?token=forged-token-value`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: stkBody(checkoutId, 0, { MpesaReceiptNumber: "FORGED1", Amount: 75 }),
+  });
+  assert(res.status === 401 || res.status === 503, `expected 401/503, got ${res.status}`);
+  await res.text();
+
+  // Donation untouched.
+  const { data: row } = await admin.from("donations")
+    .select("status, mpesa_receipt").eq("checkout_request_id", checkoutId).single();
+  assertEquals(row?.status, "pending");
+  assertEquals(row?.mpesa_receipt, null);
+
+  // Rejection audited with a reason, and no token value stored.
+  const rows = await latestRejection(admin, since);
+  assert(rows.length > 0, "expected an mpesa_callback_rejected audit entry");
+  const reason = String(rows[0].details.reason);
+  assert(
+    ["invalid_token", "missing_token", "token_not_configured"].includes(reason),
+    `unexpected reason: ${reason}`,
+  );
+  assert(!JSON.stringify(rows[0].details).includes("forged-token-value"), "audit leaked the token");
+
+  await admin.from("donations").delete().eq("checkout_request_id", checkoutId);
+  await admin.from("audit_logs").delete().eq("action", "mpesa_callback_rejected").gte("created_at", since);
+});
+
+Deno.test({
+  ...opts,
+  name: "mpesa-callback: amount mismatch is rejected, marked failed and audited",
+  ignore: !SERVICE_KEY || !CB_TOKEN,
+}, async () => {
+  const admin = createClient(SUPABASE_URL, SERVICE_KEY!, { auth: { persistSession: false } });
+  const checkoutId = `test-${crypto.randomUUID()}`;
+  const { data: anyUser } = await admin.from("user_roles").select("user_id").limit(1).single();
+  if (!anyUser) return;
+  await admin.from("donations").insert({
+    user_id: anyUser.user_id, amount_kes: 500, phone_msisdn: "254712345678",
+    status: "pending", checkout_request_id: checkoutId,
+  });
+  const since = new Date().toISOString();
+
+  const res = await fetch(URL_FN, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: stkBody(checkoutId, 0, { MpesaReceiptNumber: "MISMATCH1", Amount: 1 }),
+  });
+  assertEquals((await res.json()).ResultCode, 0);
+
+  const { data: row } = await admin.from("donations")
+    .select("status, result_desc, mpesa_receipt").eq("checkout_request_id", checkoutId).single();
+  assertEquals(row?.status, "failed");
+  assertEquals(row?.result_desc, "amount_mismatch");
+  assertEquals(row?.mpesa_receipt, null);
+
+  const rows = await latestRejection(admin, since);
+  assert(rows.some((r) => r.details.reason === "amount_mismatch"), "expected amount_mismatch audit entry");
+
+  await admin.from("donations").delete().eq("checkout_request_id", checkoutId);
+  await admin.from("audit_logs").delete().eq("action", "mpesa_callback_rejected").gte("created_at", since);
+});
+
+Deno.test({
+  ...opts,
+  name: "mpesa-callback: replay against a non-pending donation is refused and audited",
+  ignore: !SERVICE_KEY || !CB_TOKEN,
+}, async () => {
+  const admin = createClient(SUPABASE_URL, SERVICE_KEY!, { auth: { persistSession: false } });
+  const checkoutId = `test-${crypto.randomUUID()}`;
+  const { data: anyUser } = await admin.from("user_roles").select("user_id").limit(1).single();
+  if (!anyUser) return;
+  await admin.from("donations").insert({
+    user_id: anyUser.user_id, amount_kes: 100, phone_msisdn: "254712345678",
+    status: "pending", checkout_request_id: checkoutId,
+  });
+  // First (legit) callback marks it success.
+  await (await fetch(URL_FN, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: stkBody(checkoutId, 0, { MpesaReceiptNumber: "REPLAY1", Amount: 100 }),
+  })).text();
+  const since = new Date().toISOString();
+
+  // Replay attempts to flip it to failed — must be refused.
+  const res = await fetch(URL_FN, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: stkBody(checkoutId, 2001),
+  });
+  assertEquals((await res.json()).ResultCode, 0);
+  const { data: row } = await admin.from("donations")
+    .select("status, mpesa_receipt").eq("checkout_request_id", checkoutId).single();
+  assertEquals(row?.status, "success");
+  assertEquals(row?.mpesa_receipt, "REPLAY1");
+
+  const rows = await latestRejection(admin, since);
+  assert(rows.some((r) => r.details.reason === "donation_not_pending"), "expected replay audit entry");
+
+  await admin.from("donations").delete().eq("checkout_request_id", checkoutId);
+  await admin.from("audit_logs").delete().eq("action", "mpesa_callback_rejected").gte("created_at", since);
+});

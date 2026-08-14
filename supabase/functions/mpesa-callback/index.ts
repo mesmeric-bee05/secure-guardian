@@ -3,13 +3,17 @@
 // URL we hand to Daraja at STK-push time (MPESA_CALLBACK_TOKEN).
 //
 // Spoofing defences:
-//  1. Shared-secret token (query `?token=` or `x-callback-token` header).
+//  1. Shared-secret token (query `?token=`, `x-callback-token` header, or path).
+//     Supports zero-downtime rotation: MPESA_CALLBACK_TOKEN_PREVIOUS is also
+//     accepted (verification only) while an overlap window is open.
 //  2. Only rows currently in `pending` may transition (no replays/overwrites).
 //  3. The callback amount must match the donation's recorded amount_kes before
 //     a donation can be marked `success`.
+//  4. Every rejection is written to audit_logs (reason + affected donation) and
+//     unauthorized attempts additionally raise a security_events row.
 // verify_jwt=false. No user auth expected. We map by CheckoutRequestID.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
+import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -35,38 +39,111 @@ function tokenFromRequest(req: Request): string {
   return seg === "mpesa-callback" ? "" : seg;
 }
 
+function clientIP(req: Request) {
+  return (
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    req.headers.get("cf-connecting-ip") ??
+    null
+  );
+}
+
+let cached: SupabaseClient | null = null;
+function svc(): SupabaseClient {
+  if (!cached) {
+    cached = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      { auth: { persistSession: false, autoRefreshToken: false } },
+    );
+  }
+  return cached;
+}
+
+/** Durable audit trail for every rejected callback attempt. */
+async function auditRejection(
+  reason: string,
+  ip: string | null,
+  details: Record<string, unknown>,
+  donationId?: string | null,
+) {
+  try {
+    const { error } = await svc().from("audit_logs").insert({
+      user_id: null,
+      action: "mpesa_callback_rejected",
+      resource_type: "donations",
+      resource_id: donationId ?? null,
+      ip_address: ip,
+      details: { reason, ...details },
+    });
+    if (error) console.error("mpesa-callback audit insert:", error.message);
+  } catch (e) {
+    console.error("mpesa-callback audit failure:", e instanceof Error ? e.message : e);
+  }
+}
+
+async function securityEvent(
+  reason: string,
+  ip: string | null,
+  details: Record<string, unknown>,
+) {
+  try {
+    await svc().from("security_events").insert({
+      event_type: "auth_failed",
+      scope: "mpesa-callback",
+      ip_address: ip,
+      severity: "critical",
+      details: { reason, ...details },
+    });
+  } catch (e) {
+    console.error("mpesa-callback security event failure:", e instanceof Error ? e.message : e);
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { status: 200 });
   }
+  const ip = clientIP(req);
+
   if (req.method !== "POST") {
+    await auditRejection("method_not_allowed", ip, { method: req.method });
     return json({ ResultCode: 1, ResultDesc: "Method not allowed" }, 405);
   }
 
   // 1) Authenticate the caller as Safaricom via the shared callback secret.
-  const expected = Deno.env.get("MPESA_CALLBACK_TOKEN") ?? "";
-  if (!expected) {
+  const current = Deno.env.get("MPESA_CALLBACK_TOKEN") ?? "";
+  const previous = Deno.env.get("MPESA_CALLBACK_TOKEN_PREVIOUS") ?? "";
+  if (!current && !previous) {
     console.error("mpesa-callback: MPESA_CALLBACK_TOKEN not configured; rejecting");
+    await auditRejection("token_not_configured", ip, {});
     return json({ ResultCode: 1, ResultDesc: "Not configured" }, 503);
   }
-  if (!safeEqual(tokenFromRequest(req), expected)) {
-    console.warn("mpesa-callback: rejected callback with invalid token");
+
+  const presented = tokenFromRequest(req);
+  const matchesCurrent = Boolean(current) && safeEqual(presented, current);
+  const matchesPrevious = Boolean(previous) && safeEqual(presented, previous);
+  if (!matchesCurrent && !matchesPrevious) {
+    const reason = presented ? "invalid_token" : "missing_token";
+    console.warn(`mpesa-callback: rejected callback (${reason})`);
+    await auditRejection(reason, ip, { presented_length: presented.length });
+    await securityEvent(reason, ip, { presented_length: presented.length });
     return json({ ResultCode: 1, ResultDesc: "Unauthorized" }, 401);
+  }
+  if (matchesPrevious && !matchesCurrent) {
+    // Observable signal that the rotation overlap window is still in use.
+    console.warn("mpesa-callback: accepted with PREVIOUS token (rotation overlap open)");
   }
 
   try {
     const body = await req.json();
     const cb = body?.Body?.stkCallback;
     if (!cb?.CheckoutRequestID) {
+      await auditRejection("malformed_payload", ip, { keys: Object.keys(body ?? {}) });
       // Always ack 0 so Safaricom stops retrying.
       return json({ ResultCode: 0, ResultDesc: "Accepted (no-op)" });
     }
 
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-      { auth: { persistSession: false, autoRefreshToken: false } },
-    );
+    const supabase = svc();
 
     const resultCode = cb.ResultCode as number;
     const resultDesc = cb.ResultDesc as string;
@@ -89,7 +166,19 @@ serve(async (req) => {
       .eq("checkout_request_id", cb.CheckoutRequestID)
       .maybeSingle();
 
-    if (!donation || donation.status !== "pending") {
+    if (!donation) {
+      await auditRejection("unknown_donation", ip, {
+        checkout_request_id: cb.CheckoutRequestID,
+      });
+      return json({ ResultCode: 0, ResultDesc: "Accepted (no pending donation)" });
+    }
+    if (donation.status !== "pending") {
+      await auditRejection(
+        "donation_not_pending",
+        ip,
+        { checkout_request_id: cb.CheckoutRequestID, current_status: donation.status },
+        donation.id,
+      );
       return json({ ResultCode: 0, ResultDesc: "Accepted (no pending donation)" });
     }
 
@@ -102,6 +191,17 @@ serve(async (req) => {
           .update({ status: "failed", result_desc: "amount_mismatch" })
           .eq("id", donation.id)
           .eq("status", "pending");
+        await auditRejection(
+          "amount_mismatch",
+          ip,
+          {
+            checkout_request_id: cb.CheckoutRequestID,
+            expected_kes: Number(donation.amount_kes),
+            paid_kes: Math.round(paidAmount),
+          },
+          donation.id,
+        );
+        await securityEvent("amount_mismatch", ip, { donation_id: donation.id });
         return json({ ResultCode: 0, ResultDesc: "Accepted (amount mismatch)" });
       }
     }
@@ -119,6 +219,9 @@ serve(async (req) => {
     return json({ ResultCode: 0, ResultDesc: "Accepted" });
   } catch (err) {
     console.error("mpesa-callback error", err instanceof Error ? err.message : err);
+    await auditRejection("processing_error", ip, {
+      message: err instanceof Error ? err.message : "unknown",
+    });
     // Still return 0 so Safaricom doesn't spam retries.
     return json({ ResultCode: 0, ResultDesc: "Accepted with error" });
   }
