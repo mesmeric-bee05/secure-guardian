@@ -46,6 +46,10 @@ function checkVars(env: Record<string, string | undefined>): CheckRow[] {
     ok: /^https:\/\//i.test(v),
     hint: /^https:\/\//i.test(v) ? "OK" : "Must be https URL",
   }));
+  push("MPESA_CALLBACK_TOKEN", (v) => ({
+    ok: v.length >= 24,
+    hint: v.length >= 24 ? "OK" : "Expected ≥24 chars",
+  }));
   push("MPESA_ENV", (v) => ({
     ok: v === "sandbox" || v === "production",
     hint: v === "sandbox" || v === "production" ? v : "Must be sandbox|production",
@@ -113,6 +117,7 @@ serve(async (req) => {
       MPESA_SHORTCODE: Deno.env.get("MPESA_SHORTCODE"),
       MPESA_PASSKEY: Deno.env.get("MPESA_PASSKEY"),
       MPESA_CALLBACK_URL: Deno.env.get("MPESA_CALLBACK_URL"),
+      MPESA_CALLBACK_TOKEN: Deno.env.get("MPESA_CALLBACK_TOKEN"),
       MPESA_ENV: Deno.env.get("MPESA_ENV"),
     };
 
