@@ -50,6 +50,7 @@ function checkVars(env: Record<string, string | undefined>): CheckRow[] {
     ok: v.length >= 24,
     hint: v.length >= 24 ? "OK" : "Expected ≥24 chars",
   }));
+
   push("MPESA_ENV", (v) => ({
     ok: v === "sandbox" || v === "production",
     hint: v === "sandbox" || v === "production" ? v : "Must be sandbox|production",
