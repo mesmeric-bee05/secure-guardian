@@ -148,6 +148,27 @@ serve(async (req) => {
         ? "https://api.safaricom.co.ke"
         : "https://sandbox.safaricom.co.ke";
 
+    // Authenticate our callback endpoint: Safaricom echoes this exact URL back,
+    // so the shared secret proves the callback really came from our STK push.
+    const callbackToken = Deno.env.get("MPESA_CALLBACK_TOKEN") ?? "";
+    if (!callbackToken) {
+      console.error("mpesa-stk-push: MPESA_CALLBACK_TOKEN missing");
+      return new Response(
+        JSON.stringify({
+          error: "mpesa_not_configured",
+          message:
+            "M-PESA is not configured yet. Please contact an administrator to enable donations.",
+          missing: ["MPESA_CALLBACK_TOKEN"],
+        }),
+        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    const callbackUrl = (() => {
+      const u = new URL(env.MPESA_CALLBACK_URL);
+      u.searchParams.set("token", callbackToken);
+      return u.toString();
+    })();
+
     const stkRes = await fetch(`${baseUrl}/mpesa/stkpush/v1/processrequest`, {
       method: "POST",
       headers: {
