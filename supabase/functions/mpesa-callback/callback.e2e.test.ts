@@ -8,7 +8,9 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
 const SUPABASE_URL = Deno.env.get("VITE_SUPABASE_URL") ?? Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-const URL_FN = `${SUPABASE_URL}/functions/v1/mpesa-callback`;
+const CB_TOKEN = Deno.env.get("MPESA_CALLBACK_TOKEN") ?? "";
+const URL_FN = `${SUPABASE_URL}/functions/v1/mpesa-callback?token=${encodeURIComponent(CB_TOKEN)}`;
+const URL_FN_NOTOKEN = `${SUPABASE_URL}/functions/v1/mpesa-callback`;
 
 const opts = { sanitizeOps: false, sanitizeResources: false } as const;
 
@@ -31,7 +33,25 @@ function stkBody(
   });
 }
 
-Deno.test({ ...opts, name: "mpesa-callback: acks malformed payload" }, async () => {
+Deno.test({ ...opts, name: "mpesa-callback: rejects callbacks without the shared token" }, async () => {
+  const res = await fetch(URL_FN_NOTOKEN, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: stkBody("spoofed-checkout-id", 0, { MpesaReceiptNumber: "FAKE1", Amount: 1 }),
+  });
+  assert(res.status === 401 || res.status === 503, `expected 401/503, got ${res.status}`);
+  await res.text();
+});
+
+Deno.test({ ...opts, name: "mpesa-callback: rejects an invalid shared token" }, async () => {
+  const res = await fetch(`${URL_FN_NOTOKEN}?token=not-the-real-token`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: stkBody("spoofed-checkout-id", 0),
+  });
+  assert(res.status === 401 || res.status === 503, `expected 401/503, got ${res.status}`);
+  await res.text();
+});
+
+Deno.test({ ...opts, name: "mpesa-callback: acks malformed payload", ignore: !CB_TOKEN }, async () => {
   const res = await fetch(URL_FN, { method: "POST", body: "not-json" });
   const j = await res.json();
   assertEquals(j.ResultCode, 0);
@@ -46,7 +66,7 @@ Deno.test({ ...opts, name: "mpesa-callback: acks missing stkCallback" }, async (
   assertEquals(j.ResultCode, 0);
 });
 
-Deno.test({ ...opts, name: "mpesa-callback: 405 on GET" }, async () => {
+Deno.test({ ...opts, name: "mpesa-callback: 405 on GET", ignore: !CB_TOKEN }, async () => {
   const res = await fetch(URL_FN, { method: "GET" });
   assertEquals(res.status, 405);
   await res.text();
@@ -55,7 +75,7 @@ Deno.test({ ...opts, name: "mpesa-callback: 405 on GET" }, async () => {
 Deno.test({
   ...opts,
   name: "mpesa-callback: success updates donation to status=success + receipt",
-  ignore: !SERVICE_KEY,
+  ignore: !SERVICE_KEY || !CB_TOKEN,
 }, async () => {
   const admin = createClient(SUPABASE_URL, SERVICE_KEY!, { auth: { persistSession: false } });
   const checkoutId = `test-${crypto.randomUUID()}`;
@@ -85,7 +105,7 @@ Deno.test({
 Deno.test({
   ...opts,
   name: "mpesa-callback: cancelled (1032) sets status=cancelled",
-  ignore: !SERVICE_KEY,
+  ignore: !SERVICE_KEY || !CB_TOKEN,
 }, async () => {
   const admin = createClient(SUPABASE_URL, SERVICE_KEY!, { auth: { persistSession: false } });
   const checkoutId = `test-${crypto.randomUUID()}`;
@@ -109,7 +129,7 @@ Deno.test({
 Deno.test({
   ...opts,
   name: "mpesa-callback: other failure codes set status=failed",
-  ignore: !SERVICE_KEY,
+  ignore: !SERVICE_KEY || !CB_TOKEN,
 }, async () => {
   const admin = createClient(SUPABASE_URL, SERVICE_KEY!, { auth: { persistSession: false } });
   const checkoutId = `test-${crypto.randomUUID()}`;
