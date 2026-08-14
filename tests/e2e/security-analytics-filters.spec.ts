@@ -237,9 +237,16 @@ test.describe("Security Analytics — filters + CSV", () => {
       sum += Number(cnt);
     }
 
+    // Every bucket label in the file uses one consistent UTC format.
+    expect(
+      [...bucketFormats],
+      "all bucket timestamps must share one UTC format",
+    ).toHaveLength(Math.min(bucketFormats.size, 1));
+
     // Deterministic ordering: bucket ascending, then event_type alphabetically.
     const sorted = [...orderKeys].sort((a, b) => a.localeCompare(b));
     expect(orderKeys, "rows must be sorted by bucket then event_type").toEqual(sorted);
+
 
     if (typeof expectedEvents === "number") expect(sum).toBe(expectedEvents);
     return { rows: body.length, sum };
