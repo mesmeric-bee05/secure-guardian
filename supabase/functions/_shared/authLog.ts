@@ -58,6 +58,7 @@ export function logJwtFailure(ctx: JwtFailureContext): void {
     });
   } catch {
     /* best-effort; console line above is the durable signal */
+  }
 }
 
 /** Classify a post-getClaims failure into a non-sensitive reason enum. */
@@ -69,4 +70,4 @@ export function classifyClaims(
   if (!claims.claims.sub) return "missing_sub";
   return "wrong_role";
 }
-}
+
