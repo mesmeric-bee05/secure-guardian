@@ -310,7 +310,124 @@ test.describe("Security Analytics — non-admin authorization", () => {
       await service.from("audit_logs").delete().eq("id", knownId);
     }
   });
+
+  test("denied non-admin export is recorded in audit_logs", async ({ request }) => {
+    const service = svc();
+    const since = new Date().toISOString();
+    const token = await nonAdminToken();
+    const c = createClient(SUPABASE_URL, ANON, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    });
+    const { data: signIn } = await c.auth.signInWithPassword({ email: USER_EMAIL, password: USER_PASS });
+    const nonAdminId = signIn.user!.id;
+
+    const res = await request.post(EXPORT_URL, {
+      headers: { apikey: ANON, Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      data: { since: SINCE },
+    });
+    expect(res.status()).toBe(403);
+    expect(await res.text()).not.toContain("created_at,event_type");
+
+    // The denial must be provable in the tamper-evident audit chain.
+    type Row = { id: string; action: string; user_id: string | null; resource_type: string | null; details: Record<string, unknown> };
+    let rows: Row[] = [];
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline && rows.length === 0) {
+      const { data } = await service
+        .from("audit_logs")
+        .select("id, action, user_id, resource_type, details, created_at")
+        .eq("action", "security_events_export_denied")
+        .eq("user_id", nonAdminId)
+        .gte("created_at", since)
+        .order("created_at", { ascending: false });
+      rows = (data ?? []) as Row[];
+      if (rows.length === 0) await new Promise((r) => setTimeout(r, 500));
+    }
+
+    expect(rows.length, "expected exactly one denial audit entry").toBe(1);
+    expect(rows[0].resource_type).toBe("security_events");
+    expect(rows[0].user_id).toBe(nonAdminId);
+    expect(String(rows[0].details.reason)).toMatch(/not_admin|role_lookup_failed/);
+
+    await service.from("audit_logs").delete().in("id", rows.map((r) => r.id));
+  });
+
+  test("non-admin cannot delete rows from audit_logs (PostgREST)", async () => {
+    const service = svc();
+    const { data: seeded, error: seedErr } = await service
+      .from("audit_logs")
+      .insert([
+        { action: "security_analytics_export", resource_type: "security_events", details: { tag: TAG, origin: "delete-proof-1" } },
+        { action: "security_analytics_export", resource_type: "security_events", details: { tag: TAG, origin: "delete-proof-2" } },
+      ])
+      .select("id");
+    expect(seedErr).toBeNull();
+    const ids = (seeded ?? []).map((r) => r.id as string);
+    expect(ids).toHaveLength(2);
+
+    const countRows = async () => {
+      const { data } = await service.from("audit_logs").select("id").in("id", ids);
+      return (data ?? []).length;
+    };
+    expect(await countRows()).toBe(2);
+
+    try {
+      const c = createClient(SUPABASE_URL, ANON, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+      });
+      const { data: signIn, error: signInErr } = await c.auth.signInWithPassword({
+        email: USER_EMAIL,
+        password: USER_PASS,
+      });
+      expect(signInErr).toBeNull();
+      const token = signIn.session!.access_token;
+
+      // 1. Targeted raw DELETE on a known id.
+      const one = await fetch(`${SUPABASE_URL}/rest/v1/audit_logs?id=eq.${ids[0]}`, {
+        method: "DELETE",
+        headers: {
+          apikey: ANON,
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          Prefer: "return=representation",
+        },
+      });
+      expect([401, 403, 404, 405, 400, 200, 204]).toContain(one.status);
+      expect(one.status).not.toBe(201);
+      const oneBody = await one.text();
+      expect(oneBody).not.toContain(ids[0]);
+      if (one.status === 200) expect(JSON.parse(oneBody || "[]")).toEqual([]);
+
+      // 2. Blanket DELETE attempt across the whole table.
+      const all = await fetch(`${SUPABASE_URL}/rest/v1/audit_logs?action=eq.security_analytics_export`, {
+        method: "DELETE",
+        headers: { apikey: ANON, Authorization: `Bearer ${token}`, Prefer: "return=representation" },
+      });
+      expect([401, 403, 404, 405, 400, 200, 204]).toContain(all.status);
+      const allBody = await all.text();
+      expect(allBody).not.toContain(TAG);
+      if (all.status === 200) expect(JSON.parse(allBody || "[]")).toEqual([]);
+
+      // 3. Same via supabase-js.
+      const js = await c.from("audit_logs").delete().in("id", ids).select("id");
+      expect(js.error ? true : (js.data ?? []).length === 0).toBe(true);
+
+      // 4. Nothing was removed and the rows are untouched.
+      expect(await countRows()).toBe(2);
+      const { data: after } = await service
+        .from("audit_logs")
+        .select("id, action, details")
+        .in("id", ids);
+      for (const row of after ?? []) {
+        expect(row.action).toBe("security_analytics_export");
+        expect((row.details as Record<string, unknown>).tag).toBe(TAG);
+      }
+    } finally {
+      await service.from("audit_logs").delete().in("id", ids);
+    }
+  });
 });
+
 
 
 
