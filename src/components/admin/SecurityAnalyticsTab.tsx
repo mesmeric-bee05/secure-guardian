@@ -138,6 +138,21 @@ export default function SecurityAnalyticsTab() {
     return { series, eventTypes: Array.from(types).sort() };
   }, [rows, granularity]);
 
+  // UTC range preview — derived from the SAME bucketKey helper the CSV rows use
+  // so the displayed window and the exported bucket labels can never drift.
+  const utcPreview = useMemo(() => {
+    const startIso = `${from}T00:00:00.000Z`;
+    const endIso = `${to}T23:59:59.999Z`;
+    const windowStart = `${from}T00:00:00Z`;
+    const windowEnd = `${to}T23:59:59Z`;
+    const firstBucket = series.length ? series[0].bucket : bucketKey(startIso, granularity);
+    const lastBucket = series.length
+      ? series[series.length - 1].bucket
+      : bucketKey(endIso, granularity);
+    return { windowStart, windowEnd, firstBucket, lastBucket };
+  }, [from, to, granularity, series]);
+
+
   const topScopes = useMemo(() => {
     const m = new Map<string, number>();
     for (const r of rows) {
