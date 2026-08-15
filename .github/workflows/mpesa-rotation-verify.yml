@@ -1,0 +1,61 @@
+name: M-PESA Rotation Verify
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "Rotation stage to verify"
+        required: true
+        default: status
+        type: choice
+        options: [prepare, cutover, retire, status]
+
+permissions:
+  contents: read
+
+env:
+  VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+  VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+  SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+  TEST_ADMIN_EMAIL: ${{ secrets.TEST_ADMIN_EMAIL }}
+  TEST_ADMIN_PASSWORD: ${{ secrets.TEST_ADMIN_PASSWORD }}
+  MPESA_CALLBACK_TOKEN: ${{ secrets.MPESA_CALLBACK_TOKEN }}
+  MPESA_CALLBACK_TOKEN_NEXT: ${{ secrets.MPESA_CALLBACK_TOKEN_NEXT }}
+  MPESA_CALLBACK_TOKEN_PREVIOUS: ${{ secrets.MPESA_CALLBACK_TOKEN_PREVIOUS }}
+  MPESA_CALLBACK_ROTATION_STAGE: ${{ vars.MPESA_CALLBACK_ROTATION_STAGE }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Check rotation stage invariants
+        run: node scripts/mpesa-rotate-token.mjs --stage=${{ inputs.stage }}
+
+      - name: Verify callbacks are accepted for this stage
+        if: inputs.stage != 'status'
+        run: |
+          set -o pipefail
+          deno test --allow-net --allow-env --allow-read --no-check \
+            supabase/functions/mpesa-callback/ 2>&1 | tee /tmp/deno-callback.log
+          if grep -Eq '[1-9][0-9]* ignored' /tmp/deno-callback.log; then
+            echo "::error::Callback tests were skipped — required secrets missing"
+            exit 1
+          fi
+
+      - name: Upload verification log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mpesa-rotation-verify-log
+          path: /tmp/deno-callback.log
+          if-no-files-found: ignore
+          retention-days: 14
