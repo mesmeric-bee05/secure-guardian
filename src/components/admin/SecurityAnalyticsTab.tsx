@@ -333,6 +333,9 @@ export default function SecurityAnalyticsTab() {
             {rows.length} rows{truncated && ' (capped — narrow the date range for full data)'}
           </div>
         </div>
+        <div className="mt-3 text-xs text-muted-foreground" data-testid="sec-utc-range-preview">
+          {`UTC window ${utcPreview.windowStart} → ${utcPreview.windowEnd} · ${granularity} buckets ${utcPreview.firstBucket} … ${utcPreview.lastBucket}`}
+        </div>
         <div className="mt-3 text-xs text-muted-foreground" data-testid="sec-last-audit">
           {lastAudit
             ? `Last export: ${lastAudit.action} · ${new Date(lastAudit.created_at).toLocaleString()}${
@@ -340,6 +343,7 @@ export default function SecurityAnalyticsTab() {
               }`
             : 'No export recorded yet'}
         </div>
+
       </Card>
 
       <Card className="p-4">
