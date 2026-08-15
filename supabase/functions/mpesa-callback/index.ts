@@ -227,7 +227,26 @@ serve(async (req) => {
       .eq("id", donation.id)
       .eq("status", "pending");
 
+    // Record which rotation slot authenticated this callback (never the token).
+    try {
+      await supabase.from("audit_logs").insert({
+        user_id: null,
+        action: "mpesa_callback_accepted",
+        resource_type: "donations",
+        resource_id: donation.id,
+        ip_address: ip,
+        details: {
+          token_slot: matchedSlot,
+          status,
+          checkout_request_id: cb.CheckoutRequestID,
+        },
+      });
+    } catch (e) {
+      console.error("mpesa-callback accept audit failure:", e instanceof Error ? e.message : e);
+    }
+
     return json({ ResultCode: 0, ResultDesc: "Accepted" });
+
   } catch (err) {
     console.error("mpesa-callback error", err instanceof Error ? err.message : err);
     await auditRejection("processing_error", ip, {
