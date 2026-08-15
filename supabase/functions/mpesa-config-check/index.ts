@@ -129,12 +129,23 @@ serve(async (req) => {
     // Rotation state for the callback shared secret (values are never leaked).
     const currentToken = Deno.env.get("MPESA_CALLBACK_TOKEN") ?? "";
     const previousToken = Deno.env.get("MPESA_CALLBACK_TOKEN_PREVIOUS") ?? "";
+    const nextToken = Deno.env.get("MPESA_CALLBACK_TOKEN_NEXT") ?? "";
+    const stage = (Deno.env.get("MPESA_CALLBACK_ROTATION_STAGE") ?? "steady").toLowerCase();
+    const setTokens = [currentToken, previousToken, nextToken].filter(Boolean);
     const rotation = {
+      stage,
       current_set: Boolean(currentToken),
       previous_set: Boolean(previousToken),
+      next_set: Boolean(nextToken),
+      // A dual verification window is open whenever more than one distinct
+      // token is currently accepted by mpesa-callback.
+      dual_window_open: setTokens.length > 1,
       overlap_open: Boolean(currentToken && previousToken),
+      all_distinct: new Set(setTokens).size === setTokens.length,
       identical: Boolean(currentToken && previousToken && currentToken === previousToken),
+      signing_with: stage === "cutover" ? "next" : "current",
     };
+
 
     // Public callers get booleans only; admins additionally get a live Daraja probe.
     const probe = isAdmin ? await probeDaraja(env) : undefined;

@@ -138,6 +138,21 @@ export default function SecurityAnalyticsTab() {
     return { series, eventTypes: Array.from(types).sort() };
   }, [rows, granularity]);
 
+  // UTC range preview — derived from the SAME bucketKey helper the CSV rows use
+  // so the displayed window and the exported bucket labels can never drift.
+  const utcPreview = useMemo(() => {
+    const startIso = `${from}T00:00:00.000Z`;
+    const endIso = `${to}T23:59:59.999Z`;
+    const windowStart = `${from}T00:00:00Z`;
+    const windowEnd = `${to}T23:59:59Z`;
+    const firstBucket = series.length ? series[0].bucket : bucketKey(startIso, granularity);
+    const lastBucket = series.length
+      ? series[series.length - 1].bucket
+      : bucketKey(endIso, granularity);
+    return { windowStart, windowEnd, firstBucket, lastBucket };
+  }, [from, to, granularity, series]);
+
+
   const topScopes = useMemo(() => {
     const m = new Map<string, number>();
     for (const r of rows) {
@@ -318,6 +333,9 @@ export default function SecurityAnalyticsTab() {
             {rows.length} rows{truncated && ' (capped — narrow the date range for full data)'}
           </div>
         </div>
+        <div className="mt-3 text-xs text-muted-foreground" data-testid="sec-utc-range-preview">
+          {`UTC window ${utcPreview.windowStart} → ${utcPreview.windowEnd} · ${granularity} buckets ${utcPreview.firstBucket} … ${utcPreview.lastBucket}`}
+        </div>
         <div className="mt-3 text-xs text-muted-foreground" data-testid="sec-last-audit">
           {lastAudit
             ? `Last export: ${lastAudit.action} · ${new Date(lastAudit.created_at).toLocaleString()}${
@@ -325,6 +343,7 @@ export default function SecurityAnalyticsTab() {
               }`
             : 'No export recorded yet'}
         </div>
+
       </Card>
 
       <Card className="p-4">

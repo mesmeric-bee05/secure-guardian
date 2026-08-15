@@ -400,6 +400,68 @@ test.describe("Security Analytics — filters + CSV", () => {
     });
   }
 
+  // The filter UI advertises the exact UTC window + bucket edges the export
+  // will use. Those labels must equal the CSV's own first/last bucket, and every
+  // CSV bucket must fall inside the previewed window.
+  for (const bucket of ["day", "hour"] as const) {
+    test(`UTC range preview matches exported CSV buckets (${bucket})`, async ({ page }, testInfo) => {
+      await login(page);
+      await page.getByTestId("sec-filter-from").fill(fromDateStr());
+      await page.getByTestId("sec-filter-to").fill(toDateStr());
+      await page.getByRole("combobox").filter({ hasText: /^(Hour|Day)$/ }).click();
+      await page.getByRole("option", { name: bucket === "day" ? "Day" : "Hour" }).click();
+      await page.getByTestId("sec-refresh").click();
+      await expect(page.getByTestId("sec-row-count")).not.toContainText(/^0 rows/);
+
+      const preview = (await page.getByTestId("sec-utc-range-preview").innerText()).trim();
+      const m = preview.match(
+        /^UTC window (\S+) → (\S+) · (day|hour) buckets (\S+) … (\S+)$/,
+      );
+      expect(m, `unparseable UTC preview: "${preview}"`).toBeTruthy();
+      const [, winStart, winEnd, previewBucket, firstBucket, lastBucket] = m!;
+
+      expect(previewBucket).toBe(bucket);
+      expect(winStart).toBe(`${fromDateStr()}T00:00:00Z`);
+      expect(winEnd).toBe(`${toDateStr()}T23:59:59Z`);
+      const utcRe = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+      expect(winStart).toMatch(utcRe);
+      expect(winEnd).toMatch(utcRe);
+
+      const bucketRe = bucket === "day" ? /^\d{4}-\d{2}-\d{2}$/ : /^\d{4}-\d{2}-\d{2}T\d{2}:00$/;
+      expect(firstBucket).toMatch(bucketRe);
+      expect(lastBucket).toMatch(bucketRe);
+
+      const [download] = await Promise.all([
+        page.waitForEvent("download"),
+        page.getByTestId("sec-export-csv").click(),
+      ]);
+      const csv = await readDownload(download, testInfo, `utc-preview-${bucket}`, {
+        bucket,
+        preview,
+      });
+      const [header, ...body] = csv.replace(/\r\n/g, "\n").trim().split("\n");
+      expect(header).toBe(HEADER);
+      expect(body.length).toBeGreaterThan(0);
+
+      const buckets = body.map((l) => l.split(",")[0]);
+      // Preview edges are exactly the CSV's first and last bucket labels.
+      expect(buckets[0]).toBe(firstBucket);
+      expect(buckets[buckets.length - 1]).toBe(lastBucket);
+
+      const startMs = Date.parse(winStart);
+      const endMs = Date.parse(winEnd);
+      for (const b of buckets) {
+        expect(b, `bucket "${b}" format`).toMatch(bucketRe);
+        const iso = bucket === "day" ? `${b}T00:00:00.000Z` : `${b}:00.000Z`;
+        const ms = Date.parse(iso);
+        expect(Number.isNaN(ms), `unparseable bucket "${b}"`).toBe(false);
+        expect(ms).toBeGreaterThanOrEqual(startMs);
+        expect(ms).toBeLessThanOrEqual(endMs);
+      }
+    });
+  }
+
+
   // The streaming server export is the only path with real HTTP response
   // headers — prove the MIME type and attachment filename contract there,
   // for both a day-wide and an hour-wide window.

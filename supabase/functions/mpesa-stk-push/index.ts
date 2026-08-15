@@ -150,19 +150,25 @@ serve(async (req) => {
 
     // Authenticate our callback endpoint: Safaricom echoes this exact URL back,
     // so the shared secret proves the callback really came from our STK push.
-    const callbackToken = Deno.env.get("MPESA_CALLBACK_TOKEN") ?? "";
+    // During a rotation cutover we sign new pushes with the NEXT token, which
+    // mpesa-callback already accepts (dual verification window).
+    const rotationStage = (Deno.env.get("MPESA_CALLBACK_ROTATION_STAGE") ?? "steady").toLowerCase();
+    const useNext = rotationStage === "cutover";
+    const tokenVarName = useNext ? "MPESA_CALLBACK_TOKEN_NEXT" : "MPESA_CALLBACK_TOKEN";
+    const callbackToken = Deno.env.get(tokenVarName) ?? "";
     if (!callbackToken) {
-      console.error("mpesa-stk-push: MPESA_CALLBACK_TOKEN missing");
+      console.error(`mpesa-stk-push: ${tokenVarName} missing (stage=${rotationStage})`);
       return new Response(
         JSON.stringify({
           error: "mpesa_not_configured",
           message:
             "M-PESA is not configured yet. Please contact an administrator to enable donations.",
-          missing: ["MPESA_CALLBACK_TOKEN"],
+          missing: [tokenVarName],
         }),
         { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
+
     const callbackUrl = (() => {
       const u = new URL(env.MPESA_CALLBACK_URL);
       u.searchParams.set("token", callbackToken);
