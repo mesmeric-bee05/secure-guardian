@@ -111,28 +111,39 @@ serve(async (req) => {
   }
 
   // 1) Authenticate the caller as Safaricom via the shared callback secret.
+  //    Three slots are accepted so rotation is zero-downtime:
+  //      current  — steady-state token (signs new pushes)
+  //      next     — pre-published token, accepted before cutover
+  //      previous — retired token, accepted while in-flight callbacks drain
   const current = Deno.env.get("MPESA_CALLBACK_TOKEN") ?? "";
+  const next = Deno.env.get("MPESA_CALLBACK_TOKEN_NEXT") ?? "";
   const previous = Deno.env.get("MPESA_CALLBACK_TOKEN_PREVIOUS") ?? "";
-  if (!current && !previous) {
+  if (!current && !next && !previous) {
     console.error("mpesa-callback: MPESA_CALLBACK_TOKEN not configured; rejecting");
     await auditRejection("token_not_configured", ip, {});
     return json({ ResultCode: 1, ResultDesc: "Not configured" }, 503);
   }
 
   const presented = tokenFromRequest(req);
-  const matchesCurrent = Boolean(current) && safeEqual(presented, current);
-  const matchesPrevious = Boolean(previous) && safeEqual(presented, previous);
-  if (!matchesCurrent && !matchesPrevious) {
+  let matchedSlot: "current" | "next" | "previous" | null = null;
+  if (current && safeEqual(presented, current)) matchedSlot = "current";
+  else if (next && safeEqual(presented, next)) matchedSlot = "next";
+  else if (previous && safeEqual(presented, previous)) matchedSlot = "previous";
+
+  if (!matchedSlot) {
     const reason = presented ? "invalid_token" : "missing_token";
     console.warn(`mpesa-callback: rejected callback (${reason})`);
     await auditRejection(reason, ip, { presented_length: presented.length });
     await securityEvent(reason, ip, { presented_length: presented.length });
     return json({ ResultCode: 1, ResultDesc: "Unauthorized" }, 401);
   }
-  if (matchesPrevious && !matchesCurrent) {
-    // Observable signal that the rotation overlap window is still in use.
-    console.warn("mpesa-callback: accepted with PREVIOUS token (rotation overlap open)");
+  if (matchedSlot !== "current") {
+    // Observable signal that a rotation window is still in use.
+    console.warn(
+      `mpesa-callback: accepted with ${matchedSlot.toUpperCase()} token (rotation window open)`,
+    );
   }
+
 
   try {
     const body = await req.json();
