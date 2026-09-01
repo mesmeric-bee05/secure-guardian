@@ -403,6 +403,39 @@ export type Database = {
         }
         Relationships: []
       }
+      mpesa_callback_events: {
+        Row: {
+          checkout_request_id: string
+          created_at: string
+          donation_id: string | null
+          id: string
+          received_at: string
+          reference_id: string
+          result_code: number | null
+          status: string | null
+        }
+        Insert: {
+          checkout_request_id: string
+          created_at?: string
+          donation_id?: string | null
+          id?: string
+          received_at?: string
+          reference_id: string
+          result_code?: number | null
+          status?: string | null
+        }
+        Update: {
+          checkout_request_id?: string
+          created_at?: string
+          donation_id?: string | null
+          id?: string
+          received_at?: string
+          reference_id?: string
+          result_code?: number | null
+          status?: string | null
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           allergies: string[] | null
@@ -744,7 +777,15 @@ export type Database = {
         }
         Returns: string
       }
+      mpesa_denial_spike_check: {
+        Args: { _threshold?: number; _window?: string }
+        Returns: Json
+      }
       prune_stale_push_subscriptions: {
+        Args: { _older_than?: string }
+        Returns: number
+      }
+      purge_mpesa_callback_events: {
         Args: { _older_than?: string }
         Returns: number
       }
