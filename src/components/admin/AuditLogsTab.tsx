@@ -62,7 +62,26 @@ const actionTypes = [
   'delete_protocol',
   'emergency_alert',
   'case_update',
+  'mpesa_callback_rejected',
+  'mpesa_callback_accepted',
+  'mpesa_denial_spike',
 ];
+
+// Rejection reasons emitted by the mpesa-callback edge function.
+const rejectionReasons = [
+  'all',
+  'invalid_token',
+  'missing_token',
+  'token_not_configured',
+  'amount_mismatch',
+  'donation_not_pending',
+  'duplicate_reference',
+  'unknown_donation',
+  'malformed_payload',
+  'method_not_allowed',
+  'processing_error',
+];
+
 
 const PAGE_SIZE = 20;
 
@@ -71,6 +90,9 @@ export function AuditLogsTab() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterAction, setFilterAction] = useState<string>('all');
+  const [filterReason, setFilterReason] = useState<string>('all');
+  const [filterDonationId, setFilterDonationId] = useState('');
+  const [appliedDonationId, setAppliedDonationId] = useState('');
   const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [page, setPage] = useState(0);
@@ -78,7 +100,12 @@ export function AuditLogsTab() {
 
   useEffect(() => {
     fetchLogs();
-  }, [page, filterAction]);
+  }, [page, filterAction, filterReason, appliedDonationId]);
+
+  // Filter changes always restart pagination so results stay consistent.
+  useEffect(() => {
+    setPage(0);
+  }, [filterAction, filterReason, appliedDonationId]);
 
   const fetchLogs = async () => {
     try {
@@ -94,6 +121,16 @@ export function AuditLogsTab() {
       if (filterAction !== 'all') {
         query = query.eq('action', filterAction);
       }
+
+      if (filterReason !== 'all') {
+        query = query.eq('details->>reason', filterReason);
+      }
+
+      const donationId = appliedDonationId.trim();
+      if (donationId) {
+        query = query.eq('resource_id', donationId);
+      }
+
 
       const { data, error, count } = await query;
 
@@ -169,7 +206,7 @@ export function AuditLogsTab() {
               <ClipboardList className="w-5 h-5" />
               Audit Logs
             </CardTitle>
-            <div className="flex flex-col sm:flex-row gap-3">
+            <div className="flex flex-col sm:flex-row flex-wrap gap-3">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
@@ -177,10 +214,11 @@ export function AuditLogsTab() {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="pl-10 w-full sm:w-60"
+                  data-testid="audit-search"
                 />
               </div>
               <Select value={filterAction} onValueChange={setFilterAction}>
-                <SelectTrigger className="w-full sm:w-48">
+                <SelectTrigger className="w-full sm:w-48" data-testid="audit-action-filter">
                   <SelectValue placeholder="Filter by action" />
                 </SelectTrigger>
                 <SelectContent>
@@ -191,11 +229,35 @@ export function AuditLogsTab() {
                   ))}
                 </SelectContent>
               </Select>
-              <Button variant="outline" onClick={fetchLogs} disabled={loading}>
+              <Select value={filterReason} onValueChange={setFilterReason}>
+                <SelectTrigger className="w-full sm:w-52" data-testid="audit-reason-filter">
+                  <SelectValue placeholder="Rejection reason" />
+                </SelectTrigger>
+                <SelectContent>
+                  {rejectionReasons.map((reason) => (
+                    <SelectItem key={reason} value={reason}>
+                      {reason === 'all' ? 'All Reasons' : formatAction(reason)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input
+                placeholder="Donation ID"
+                value={filterDonationId}
+                onChange={(e) => setFilterDonationId(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') setAppliedDonationId(filterDonationId);
+                }}
+                onBlur={() => setAppliedDonationId(filterDonationId)}
+                className="w-full sm:w-72"
+                data-testid="audit-donation-filter"
+              />
+              <Button variant="outline" onClick={fetchLogs} disabled={loading} data-testid="audit-refresh">
                 <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
                 Refresh
               </Button>
             </div>
+
           </div>
         </CardHeader>
         <CardContent>
@@ -219,13 +281,22 @@ export function AuditLogsTab() {
                   <TableBody>
                     {filteredLogs.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={5} className="text-center py-8 text-muted-foreground" data-testid="audit-empty">
                           No audit logs found
                         </TableCell>
                       </TableRow>
                     ) : (
                       filteredLogs.map((log) => (
-                        <TableRow key={log.id}>
+                        <TableRow
+                          key={log.id}
+                          data-testid="audit-row"
+                          data-action={log.action}
+                          data-reason={typeof log.details === 'object' && log.details !== null && 'reason' in (log.details as Record<string, unknown>)
+                            ? String((log.details as Record<string, unknown>).reason)
+                            : ''}
+                          data-resource-id={log.resource_id ?? ''}
+                        >
+
                           <TableCell className="whitespace-nowrap">
                             {log.created_at ? format(new Date(log.created_at), 'MMM d, yyyy HH:mm') : '-'}
                           </TableCell>

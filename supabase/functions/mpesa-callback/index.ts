@@ -193,6 +193,42 @@ serve(async (req) => {
       return json({ ResultCode: 0, ResultDesc: "Accepted (no pending donation)" });
     }
 
+    // 2b) Database-level idempotency. The (checkout_request_id, reference_id)
+    //     pair is UNIQUE, so a replayed callback — even with a valid token —
+    //     loses the insert race and is refused here before any money moves.
+    const referenceId = receipt ?? `resultcode:${resultCode}`;
+    const { error: ledgerError } = await supabase
+      .from("mpesa_callback_events")
+      .insert({
+        checkout_request_id: cb.CheckoutRequestID,
+        reference_id: referenceId,
+        donation_id: donation.id,
+        result_code: resultCode,
+        status,
+      });
+
+    if (ledgerError) {
+      // 23505 = unique_violation → already processed.
+      const duplicate = ledgerError.code === "23505";
+      await auditRejection(
+        duplicate ? "duplicate_reference" : "ledger_insert_failed",
+        ip,
+        {
+          checkout_request_id: cb.CheckoutRequestID,
+          reference_id: referenceId,
+          db_code: ledgerError.code ?? null,
+        },
+        donation.id,
+      );
+      if (duplicate) {
+        await securityEvent("duplicate_reference", ip, {
+          donation_id: donation.id,
+          checkout_request_id: cb.CheckoutRequestID,
+        });
+      }
+      return json({ ResultCode: 0, ResultDesc: "Accepted (duplicate)" });
+    }
+
     // 3) Amount must match the initiated STK push before we credit a success.
     if (status === "success" && Number.isFinite(paidAmount)) {
       if (Math.round(paidAmount) !== Math.round(Number(donation.amount_kes))) {
@@ -216,6 +252,7 @@ serve(async (req) => {
         return json({ ResultCode: 0, ResultDesc: "Accepted (amount mismatch)" });
       }
     }
+
 
     await supabase
       .from("donations")
