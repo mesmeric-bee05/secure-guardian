@@ -281,13 +281,22 @@ export function AuditLogsTab() {
                   <TableBody>
                     {filteredLogs.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={5} className="text-center py-8 text-muted-foreground" data-testid="audit-empty">
                           No audit logs found
                         </TableCell>
                       </TableRow>
                     ) : (
                       filteredLogs.map((log) => (
-                        <TableRow key={log.id}>
+                        <TableRow
+                          key={log.id}
+                          data-testid="audit-row"
+                          data-action={log.action}
+                          data-reason={typeof log.details === 'object' && log.details !== null && 'reason' in (log.details as Record<string, unknown>)
+                            ? String((log.details as Record<string, unknown>).reason)
+                            : ''}
+                          data-resource-id={log.resource_id ?? ''}
+                        >
+
                           <TableCell className="whitespace-nowrap">
                             {log.created_at ? format(new Date(log.created_at), 'MMM d, yyyy HH:mm') : '-'}
                           </TableCell>
