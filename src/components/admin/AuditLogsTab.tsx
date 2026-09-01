@@ -206,7 +206,7 @@ export function AuditLogsTab() {
               <ClipboardList className="w-5 h-5" />
               Audit Logs
             </CardTitle>
-            <div className="flex flex-col sm:flex-row gap-3">
+            <div className="flex flex-col sm:flex-row flex-wrap gap-3">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
@@ -214,10 +214,11 @@ export function AuditLogsTab() {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="pl-10 w-full sm:w-60"
+                  data-testid="audit-search"
                 />
               </div>
               <Select value={filterAction} onValueChange={setFilterAction}>
-                <SelectTrigger className="w-full sm:w-48">
+                <SelectTrigger className="w-full sm:w-48" data-testid="audit-action-filter">
                   <SelectValue placeholder="Filter by action" />
                 </SelectTrigger>
                 <SelectContent>
@@ -228,11 +229,35 @@ export function AuditLogsTab() {
                   ))}
                 </SelectContent>
               </Select>
-              <Button variant="outline" onClick={fetchLogs} disabled={loading}>
+              <Select value={filterReason} onValueChange={setFilterReason}>
+                <SelectTrigger className="w-full sm:w-52" data-testid="audit-reason-filter">
+                  <SelectValue placeholder="Rejection reason" />
+                </SelectTrigger>
+                <SelectContent>
+                  {rejectionReasons.map((reason) => (
+                    <SelectItem key={reason} value={reason}>
+                      {reason === 'all' ? 'All Reasons' : formatAction(reason)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input
+                placeholder="Donation ID"
+                value={filterDonationId}
+                onChange={(e) => setFilterDonationId(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') setAppliedDonationId(filterDonationId);
+                }}
+                onBlur={() => setAppliedDonationId(filterDonationId)}
+                className="w-full sm:w-72"
+                data-testid="audit-donation-filter"
+              />
+              <Button variant="outline" onClick={fetchLogs} disabled={loading} data-testid="audit-refresh">
                 <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
                 Refresh
               </Button>
             </div>
+
           </div>
         </CardHeader>
         <CardContent>
