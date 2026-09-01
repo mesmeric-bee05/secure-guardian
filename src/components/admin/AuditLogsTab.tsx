@@ -62,7 +62,26 @@ const actionTypes = [
   'delete_protocol',
   'emergency_alert',
   'case_update',
+  'mpesa_callback_rejected',
+  'mpesa_callback_accepted',
+  'mpesa_denial_spike',
 ];
+
+// Rejection reasons emitted by the mpesa-callback edge function.
+const rejectionReasons = [
+  'all',
+  'invalid_token',
+  'missing_token',
+  'token_not_configured',
+  'amount_mismatch',
+  'donation_not_pending',
+  'duplicate_reference',
+  'unknown_donation',
+  'malformed_payload',
+  'method_not_allowed',
+  'processing_error',
+];
+
 
 const PAGE_SIZE = 20;
 
