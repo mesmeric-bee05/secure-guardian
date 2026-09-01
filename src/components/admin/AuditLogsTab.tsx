@@ -90,6 +90,9 @@ export function AuditLogsTab() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterAction, setFilterAction] = useState<string>('all');
+  const [filterReason, setFilterReason] = useState<string>('all');
+  const [filterDonationId, setFilterDonationId] = useState('');
+  const [appliedDonationId, setAppliedDonationId] = useState('');
   const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [page, setPage] = useState(0);
@@ -97,7 +100,12 @@ export function AuditLogsTab() {
 
   useEffect(() => {
     fetchLogs();
-  }, [page, filterAction]);
+  }, [page, filterAction, filterReason, appliedDonationId]);
+
+  // Filter changes always restart pagination so results stay consistent.
+  useEffect(() => {
+    setPage(0);
+  }, [filterAction, filterReason, appliedDonationId]);
 
   const fetchLogs = async () => {
     try {
@@ -113,6 +121,16 @@ export function AuditLogsTab() {
       if (filterAction !== 'all') {
         query = query.eq('action', filterAction);
       }
+
+      if (filterReason !== 'all') {
+        query = query.eq('details->>reason', filterReason);
+      }
+
+      const donationId = appliedDonationId.trim();
+      if (donationId) {
+        query = query.eq('resource_id', donationId);
+      }
+
 
       const { data, error, count } = await query;
 
