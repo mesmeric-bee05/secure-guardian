@@ -49,20 +49,20 @@ const BASE_SECURITY_HEADERS: Record<string, string> = {
 
 export function getCorsHeaders(req: Request): Record<string, string> {
   const origin = req.headers.get('Origin') || '';
-  const allowed = getAllowedOrigins();
   const headers: Record<string, string> = {
     ...BASE_SECURITY_HEADERS,
     'Access-Control-Allow-Headers':
-      'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+      'authorization, x-client-info, apikey, content-type, x-alert-token, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Access-Control-Max-Age': '86400',
     'Vary': 'Origin',
   };
-  if (allowed.includes(origin)) {
+  if (origin && originAllowed(origin)) {
     headers['Access-Control-Allow-Origin'] = origin;
   }
   return headers;
 }
+
 
 export function rejectDisallowedOrigin(req: Request): Response | null {
   if (req.method === 'OPTIONS') return null;
