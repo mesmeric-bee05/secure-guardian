@@ -166,8 +166,17 @@ export function useChat(options: UseChatOptions = {}) {
       );
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Request failed: ${response.status}`);
+        const raw = await response.text().catch(() => '');
+        let detail = raw;
+        try {
+          const parsedError = JSON.parse(raw);
+          detail = parsedError?.error || raw;
+        } catch { /* keep raw text */ }
+        throw new Error(
+          detail
+            ? `${detail} (status ${response.status})`
+            : `Request failed with status ${response.status}`,
+        );
       }
 
       if (!response.body) {
@@ -254,12 +263,12 @@ export function useChat(options: UseChatOptions = {}) {
       console.error('Chat error:', errorMessage);
       onError?.(errorMessage);
       
-      // Add error message to chat
+      // Surface the real failure so problems are diagnosable, not hidden.
       setMessages(prev => [...prev, {
         role: 'assistant',
-        content: language === 'sw' 
-          ? 'Samahani, kulikuwa na tatizo. Tafadhali jaribu tena.'
-          : 'Sorry, there was an error. Please try again.',
+        content: language === 'sw'
+          ? `Samahani, ombi halikufanikiwa: ${errorMessage}`
+          : `Sorry, the request failed: ${errorMessage}`,
       }]);
     } finally {
       setIsLoading(false);
