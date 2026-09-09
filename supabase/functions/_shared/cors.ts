@@ -9,6 +9,17 @@ const STATIC_ALLOWED_ORIGINS = [
   'https://fortify-trust-wall.lovable.app',
 ];
 
+// Lovable preview/sandbox/published origins rotate per session, so an exact
+// list alone silently blocks the running app. These patterns keep the surface
+// tight (Lovable-owned hosts + local dev) while tolerating rotation.
+const ALLOWED_ORIGIN_PATTERNS: RegExp[] = [
+  /^https:\/\/[a-z0-9-]+\.lovable\.app$/i,
+  /^https:\/\/[a-z0-9-]+\.lovableproject\.com$/i,
+  /^https:\/\/[a-z0-9-]+\.sandbox\.lovable\.dev$/i,
+  /^http:\/\/localhost:\d+$/i,
+  /^http:\/\/127\.0\.0\.1:\d+$/i,
+];
+
 function getAllowedOrigins(): string[] {
   const extra = (Deno.env.get('ALLOWED_ORIGINS_EXTRA') ?? '')
     .split(',')
@@ -17,11 +28,18 @@ function getAllowedOrigins(): string[] {
   return [...STATIC_ALLOWED_ORIGINS, ...extra];
 }
 
+function originAllowed(origin: string): boolean {
+  if (!origin) return true;
+  if (getAllowedOrigins().includes(origin)) return true;
+  return ALLOWED_ORIGIN_PATTERNS.some((re) => re.test(origin));
+}
+
 export function isOriginAllowed(req: Request): boolean {
   const origin = req.headers.get('Origin');
   if (!origin) return true; // non-browser / same-origin
-  return getAllowedOrigins().includes(origin);
+  return originAllowed(origin);
 }
+
 
 const BASE_SECURITY_HEADERS: Record<string, string> = {
   'X-Content-Type-Options': 'nosniff',
