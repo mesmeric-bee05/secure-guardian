@@ -263,12 +263,12 @@ export function useChat(options: UseChatOptions = {}) {
       console.error('Chat error:', errorMessage);
       onError?.(errorMessage);
       
-      // Add error message to chat
+      // Surface the real failure so problems are diagnosable, not hidden.
       setMessages(prev => [...prev, {
         role: 'assistant',
-        content: language === 'sw' 
-          ? 'Samahani, kulikuwa na tatizo. Tafadhali jaribu tena.'
-          : 'Sorry, there was an error. Please try again.',
+        content: language === 'sw'
+          ? `Samahani, ombi halikufanikiwa: ${errorMessage}`
+          : `Sorry, the request failed: ${errorMessage}`,
       }]);
     } finally {
       setIsLoading(false);
