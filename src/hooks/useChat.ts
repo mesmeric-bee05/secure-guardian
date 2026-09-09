@@ -166,8 +166,17 @@ export function useChat(options: UseChatOptions = {}) {
       );
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Request failed: ${response.status}`);
+        const raw = await response.text().catch(() => '');
+        let detail = raw;
+        try {
+          const parsedError = JSON.parse(raw);
+          detail = parsedError?.error || raw;
+        } catch { /* keep raw text */ }
+        throw new Error(
+          detail
+            ? `${detail} (status ${response.status})`
+            : `Request failed with status ${response.status}`,
+        );
       }
 
       if (!response.body) {
