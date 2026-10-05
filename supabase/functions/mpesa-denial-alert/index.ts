@@ -50,7 +50,8 @@ serve(async (req) => {
   const secret = Deno.env.get("ALERT_TRIGGER_TOKEN") ?? "";
   const presented = req.headers.get("x-alert-token") ??
     new URL(req.url).searchParams.get("token") ?? "";
-  if (secret && presented !== secret) {
+  if (!secret) return jsonRes({ error: "alert_token_not_configured" }, 503);
+  if (presented.length !== secret.length || presented !== secret) {
     return jsonRes({ error: "unauthorized" }, 401);
   }
 
