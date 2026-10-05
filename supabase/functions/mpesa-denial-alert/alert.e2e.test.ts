@@ -31,6 +31,18 @@ Deno.test({ ...opts, name: "denial-alert: rejects non-POST" }, async () => {
   await res.text();
 });
 
+Deno.test({ ...opts, name: "denial-alert: rejects a missing or wrong token" }, async () => {
+  for (const headers of [{}, { "x-alert-token": "wrong-token-value-000000" }]) {
+    const res = await fetch(FN, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: "{}",
+    });
+    assertEquals(res.status, 401);
+    await res.text();
+  }
+});
+
 Deno.test({
   ...opts,
   name: "denial-alert: fires for a simulated denial spike and records a security event",
@@ -66,9 +78,7 @@ Deno.test({
   assert(events && events.length > 0, "expected a mpesa_denial_spike security event");
   assertEquals(events![0].severity, "critical");
 
-  // Cleanup seeded audit rows (security_events are append-only history).
-  await admin.from("audit_logs").delete()
-    .eq("action", "mpesa_callback_rejected").gte("created_at", since);
+  // audit_logs is append-only (hash chain); seeded rows stay identifiable via test_marker.
 });
 
 Deno.test({
