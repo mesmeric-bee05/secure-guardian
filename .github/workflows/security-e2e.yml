@@ -139,3 +139,16 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+
+      - name: Run M-PESA denial-alert spike test
+        if: always()
+        env:
+          ALERT_SCHEDULER_TOKEN: ${{ secrets.ALERT_SCHEDULER_TOKEN }}
+        run: |
+          set -o pipefail
+          deno test --allow-net --allow-env --allow-read --no-check \
+            supabase/functions/mpesa-denial-alert/alert.e2e.test.ts 2>&1 | tee /tmp/deno-alert.log
+          if grep -Eq '[1-9][0-9]* ignored' /tmp/deno-alert.log; then
+            echo "::error::Alert spike test skipped — SUPABASE_SERVICE_ROLE_KEY / ALERT_SCHEDULER_TOKEN missing"
+            exit 1
+          fi
