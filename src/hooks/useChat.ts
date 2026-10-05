@@ -145,6 +145,7 @@ export function useChat(options: UseChatOptions = {}) {
     try {
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token;
+      if (!accessToken) throw new Error('Please sign in to use the AI assistant.');
 
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-chat`,
@@ -152,7 +153,8 @@ export function useChat(options: UseChatOptions = {}) {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${accessToken || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+            'Authorization': `Bearer ${accessToken}`,
+            'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
           },
           body: JSON.stringify({
             messages: [...messages, userMessage].map(m => ({

@@ -7,7 +7,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
 const SUPABASE_URL = Deno.env.get("VITE_SUPABASE_URL") ?? Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-const ALERT_TOKEN = Deno.env.get("ALERT_TRIGGER_TOKEN") ?? "";
+const ALERT_TOKEN = Deno.env.get("ALERT_SCHEDULER_TOKEN") ?? Deno.env.get("ALERT_TRIGGER_TOKEN") ?? "";
 const FN = `${SUPABASE_URL}/functions/v1/mpesa-denial-alert`;
 
 const opts = { sanitizeOps: false, sanitizeResources: false } as const;
@@ -29,6 +29,18 @@ Deno.test({ ...opts, name: "denial-alert: rejects non-POST" }, async () => {
   const res = await fetch(FN, { method: "GET" });
   assertEquals(res.status, 405);
   await res.text();
+});
+
+Deno.test({ ...opts, name: "denial-alert: rejects a missing or wrong token" }, async () => {
+  for (const headers of [{}, { "x-alert-token": "wrong-token-value-000000" }]) {
+    const res = await fetch(FN, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: "{}",
+    });
+    assertEquals(res.status, 401);
+    await res.text();
+  }
 });
 
 Deno.test({
@@ -66,9 +78,7 @@ Deno.test({
   assert(events && events.length > 0, "expected a mpesa_denial_spike security event");
   assertEquals(events![0].severity, "critical");
 
-  // Cleanup seeded audit rows (security_events are append-only history).
-  await admin.from("audit_logs").delete()
-    .eq("action", "mpesa_callback_rejected").gte("created_at", since);
+  // audit_logs is append-only (hash chain); seeded rows stay identifiable via test_marker.
 });
 
 Deno.test({

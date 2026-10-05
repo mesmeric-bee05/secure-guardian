@@ -128,14 +128,16 @@ serve(async (req) => {
 
     console.log('AI Chat request:', { userId: userId.slice(0, 8) + '...', messageCount: messages.length, language });
 
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const callGateway = () => fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${LOVABLE_API_KEY}`,
         'Content-Type': 'application/json',
+        'X-Lovable-AIG-SDK': 'fetch',
       },
       body: JSON.stringify({
-        model: 'google/gemini-3-flash-preview',
+        model: 'openai/gpt-6-astra',
+        reasoning_effort: 'low',
         messages: [
           { role: 'system', content: systemPrompt },
           ...messages,
@@ -144,28 +146,38 @@ serve(async (req) => {
       }),
     });
 
-    if (!response.ok) {
-      console.error('AI gateway error:', response.status);
-      
-      if (response.status === 429) {
-        return new Response(
-          JSON.stringify({ error: 'Rate limit exceeded. Please try again in a moment.' }),
-          { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-      
-      if (response.status === 402) {
-        return new Response(
-          JSON.stringify({ error: 'AI credits exhausted. Please contact support.' }),
-          { status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-      
-      throw new Error('AI service temporarily unavailable');
+    // Bounded retry only for 429/5xx.
+    let response = await callGateway();
+    for (let attempt = 1; attempt <= 2 && (response.status === 429 || response.status >= 500); attempt++) {
+      await response.text().catch(() => '');
+      const ra = Number(response.headers.get('retry-after'));
+      const wait = Number.isFinite(ra) && ra > 0 ? Math.min(ra, 5) * 1000 : 500 * 2 ** attempt + Math.random() * 300;
+      await new Promise((r) => setTimeout(r, wait));
+      response = await callGateway();
     }
 
+    if (!response.ok) {
+      const raw = await response.text().catch(() => '');
+      let upstreamMsg = '';
+      try { const j = JSON.parse(raw); upstreamMsg = j?.error?.message || j?.message || ''; } catch { /* ignore */ }
+      console.error('AI gateway error:', response.status, upstreamMsg.slice(0, 200));
+      const messagesByStatus: Record<number, string> = {
+        429: 'The AI assistant is busy. Please try again in a moment.',
+        402: upstreamMsg || 'AI credits exhausted. Please contact support.',
+        403: upstreamMsg || 'AI access is currently blocked for this workspace.',
+        401: 'AI service is not configured correctly.',
+        400: 'The AI request was rejected. Please shorten your message and try again.',
+      };
+      const status = [400, 401, 402, 403, 429].includes(response.status) ? response.status : 502;
+      return new Response(
+        JSON.stringify({ error: messagesByStatus[response.status] || 'AI service temporarily unavailable. Please try again.' }),
+        { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const runId = response.headers.get('x-lovable-aig-run-id');
     return new Response(response.body, {
-      headers: { ...corsHeaders, 'Content-Type': 'text/event-stream' },
+      headers: { ...corsHeaders, 'Content-Type': 'text/event-stream', ...(runId ? { 'X-Lovable-AIG-Run-ID': runId } : {}) },
     });
   } catch (error) {
     const corsHeaders = getCorsHeaders(req);
