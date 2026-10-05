@@ -7,7 +7,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
 const SUPABASE_URL = Deno.env.get("VITE_SUPABASE_URL") ?? Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-const ALERT_TOKEN = Deno.env.get("ALERT_TRIGGER_TOKEN") ?? "";
+const ALERT_TOKEN = Deno.env.get("ALERT_SCHEDULER_TOKEN") ?? Deno.env.get("ALERT_TRIGGER_TOKEN") ?? "";
 const FN = `${SUPABASE_URL}/functions/v1/mpesa-denial-alert`;
 
 const opts = { sanitizeOps: false, sanitizeResources: false } as const;
