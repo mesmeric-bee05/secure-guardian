@@ -47,11 +47,12 @@ serve(async (req) => {
   }
 
   // Callers must present the scheduler secret (cron) — no user auth path.
-  const secret = Deno.env.get("ALERT_TRIGGER_TOKEN") ?? "";
+  const accepted = [Deno.env.get("ALERT_SCHEDULER_TOKEN"), Deno.env.get("ALERT_TRIGGER_TOKEN")]
+    .filter((t): t is string => !!t && t.length >= 16);
   const presented = req.headers.get("x-alert-token") ??
     new URL(req.url).searchParams.get("token") ?? "";
-  if (!secret) return jsonRes({ error: "alert_token_not_configured" }, 503);
-  if (presented.length !== secret.length || presented !== secret) {
+  if (accepted.length === 0) return jsonRes({ error: "alert_token_not_configured" }, 503);
+  if (!accepted.some((t) => t.length === presented.length && t === presented)) {
     return jsonRes({ error: "unauthorized" }, 401);
   }
 
