@@ -237,7 +237,7 @@ export default function MpesaOpsTab() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         {cards.map((c) => (
           <Card key={c.key} data-testid={`ops-card-${c.key}`}>
             <CardContent className="pt-6">
@@ -339,7 +339,7 @@ export default function MpesaOpsTab() {
                 <TableRow><TableCell colSpan={3} className="text-center text-muted-foreground" data-testid="ops-denials-empty">No denied attempts in this window</TableCell></TableRow>
               ) : denials.map((d) => (
                 <TableRow key={d.id} data-testid="ops-denial-row" data-reason={reasonOf(d.details)} data-resource-id={d.resource_id || ''}>
-                  <TableCell><Badge variant="destructive">{reasonOf(d.details)}</Badge></TableCell>
+                  <TableCell><Badge variant="destructive">{reasonOf(d.details)}</Badge>{(d.details as Record<string, unknown> | null)?.simulated === true && <Badge variant="outline" className="ml-2" data-testid="simulated-badge">Simulated</Badge>}</TableCell>
                   <TableCell className="font-mono text-xs">{d.resource_id || '—'}</TableCell>
                   <TableCell>{d.created_at ? format(new Date(d.created_at), 'MMM d, HH:mm') : '—'}</TableCell>
                 </TableRow>
