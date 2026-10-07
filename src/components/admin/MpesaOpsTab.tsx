@@ -92,6 +92,7 @@ export default function MpesaOpsTab() {
 
   const [pending, setPending] = useState<Donation[]>([]);
   const [completedCount, setCompletedCount] = useState(0);
+  const [ussdBursts, setUssdBursts] = useState(0);
   const [ledger, setLedger] = useState<LedgerEvent[]>([]);
   const [denials, setDenials] = useState<DenialRow[]>([]);
 
@@ -132,12 +133,20 @@ export default function MpesaOpsTab() {
       if (donationId) denialQuery = denialQuery.eq('resource_id', donationId);
 
       const completedQuery = supabase
-        .from('donations')
+        .from('mpesa_callback_events')
         .select('id', { count: 'exact', head: true })
-        .eq('status', 'completed')
+        .eq('status', 'success')
+        .gte('received_at', since);
+
+      const burstQuery = supabase
+        .from('security_events')
+        .select('id', { count: 'exact', head: true })
+        .eq('event_type', 'rate_limit_429')
+        .ilike('scope', 'ussd%')
         .gte('created_at', since);
 
-      const [p, l, d, c] = await Promise.all([pendingQuery, ledgerQuery, denialQuery, completedQuery]);
+      const [p, l, d, c, b] = await Promise.all([pendingQuery, ledgerQuery, denialQuery, completedQuery, burstQuery]);
+      if (!b.error) setUssdBursts(b.count || 0);
 
       if (p.error) throw p.error;
       if (l.error) throw l.error;
@@ -175,6 +184,7 @@ export default function MpesaOpsTab() {
     { key: 'completed', label: 'Successful callbacks', value: completedCount, icon: CheckCircle2 },
     { key: 'denied', label: 'Denied attempts', value: denials.length, icon: ShieldAlert },
     { key: 'duplicate', label: 'Duplicate references', value: duplicateCount, icon: Copy },
+    { key: 'ussd', label: 'USSD bursts (rate-limited)', value: ussdBursts, icon: ShieldAlert },
   ];
 
   return (
@@ -304,7 +314,7 @@ export default function MpesaOpsTab() {
                   <TableCell className="font-mono text-xs">{e.reference_id}</TableCell>
                   <TableCell className="font-mono text-xs">{e.checkout_request_id}</TableCell>
                   <TableCell>{e.result_code ?? '—'}</TableCell>
-                  <TableCell><Badge variant={e.status === 'completed' ? 'default' : 'secondary'}>{e.status || 'unknown'}</Badge></TableCell>
+                  <TableCell><Badge variant={e.status === 'success' ? 'default' : 'secondary'}>{e.status || 'unknown'}</Badge></TableCell>
                   <TableCell>{format(new Date(e.received_at), 'MMM d, HH:mm')}</TableCell>
                 </TableRow>
               ))}
