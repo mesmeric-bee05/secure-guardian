@@ -19,9 +19,9 @@ const DON_B = randomUUID();
 async function open(page: Page) {
   if (ADMIN_EMAIL && ADMIN_PASS) {
     await page.goto("/auth");
-    await page.getByLabel(/email/i).fill(ADMIN_EMAIL);
-    await page.getByLabel(/password/i).fill(ADMIN_PASS);
-    await page.getByRole("button", { name: /sign in|log in/i }).click();
+    await page.locator("#login-email").fill(ADMIN_EMAIL);
+    await page.locator("#login-password").fill(ADMIN_PASS);
+    await page.locator("form").filter({ has: page.locator("#login-email") }).getByRole("button").click();
     await page.waitForURL((u) => !u.pathname.startsWith("/auth"), { timeout: 15_000 });
   } else {
     await page.goto("/");

@@ -30,9 +30,9 @@ async function login(page: Page, email: string, pass: string, injected = false) 
     await page.evaluate(({ k, v }) => window.localStorage.setItem(k, v), { k: STORAGE_KEY, v: SESSION_JSON });
   } else {
     await page.goto("/auth");
-    await page.getByLabel(/email/i).fill(email);
-    await page.getByLabel(/password/i).fill(pass);
-    await page.getByRole("button", { name: /sign in|log in/i }).click();
+    await page.locator("#login-email").fill(email);
+    await page.locator("#login-password").fill(pass);
+    await page.locator("form").filter({ has: page.locator("#login-email") }).getByRole("button").click();
     await page.waitForURL((u) => !u.pathname.startsWith("/auth"), { timeout: 15_000 });
   }
   await page.goto("/admin");
@@ -114,6 +114,29 @@ test.describe("M-PESA Ops dashboard", () => {
     await page.getByRole("option", { name: /amount/i }).click();
     await expect(page.locator('[data-testid="ops-denial-row"][data-reason="amount_mismatch"]')).toHaveCount(1);
     await expect(page.getByTestId("ops-denial-row")).toHaveCount(1);
+  });
+
+  test("USSD burst card counts blocked bursts within the chosen window", async ({ page }) => {
+    const c = svc();
+    const now = Date.now();
+    const rows = [0, 1].map((i) => ({
+      event_type: "rate_limit_429", scope: "ussd-ip", severity: "warning",
+      created_at: new Date(now - (i + 1) * 60_000).toISOString(),
+      details: { simulated: true, run_id: RUN },
+    }));
+    rows.push({ ...rows[0], created_at: new Date(now - 3 * 86400_000).toISOString() });
+    const ins = await c.from("security_events").insert(rows);
+    if (ins.error) throw new Error(`seed security_events: ${ins.error.message}`);
+
+    await openOps(page);
+    const card = page.getByTestId("ops-count-ussd");
+    await expect(card).not.toHaveText("—", { timeout: 15_000 });
+    const day = Number(await card.textContent());
+    expect(day).toBeGreaterThanOrEqual(2);
+    await page.getByTestId("ops-window").click();
+    await page.getByRole("option", { name: /7 days/i }).click();
+    await expect(page.getByTestId("ops-refresh").locator(".animate-spin")).toHaveCount(0, { timeout: 15_000 });
+    await expect.poll(async () => Number(await card.textContent())).toBeGreaterThanOrEqual(day + 1);
   });
 
   test("success card counts ledger rows with status success", async () => {
