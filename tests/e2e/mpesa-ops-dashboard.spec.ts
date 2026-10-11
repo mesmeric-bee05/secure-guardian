@@ -30,9 +30,9 @@ async function login(page: Page, email: string, pass: string, injected = false) 
     await page.evaluate(({ k, v }) => window.localStorage.setItem(k, v), { k: STORAGE_KEY, v: SESSION_JSON });
   } else {
     await page.goto("/auth");
-    await page.getByLabel(/email/i).fill(email);
-    await page.getByLabel(/password/i).fill(pass);
-    await page.getByRole("button", { name: /sign in|log in/i }).click();
+    await page.locator("#login-email").fill(email);
+    await page.locator("#login-password").fill(pass);
+    await page.locator("form").filter({ has: page.locator("#login-email") }).getByRole("button").click();
     await page.waitForURL((u) => !u.pathname.startsWith("/auth"), { timeout: 15_000 });
   }
   await page.goto("/admin");
