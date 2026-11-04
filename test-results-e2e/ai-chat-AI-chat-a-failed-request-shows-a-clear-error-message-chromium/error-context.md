@@ -6,8 +6,8 @@
 
 # Test info
 
-- Name: admin-chat-history.spec.ts >> Admin Chat History >> each message is stored and search narrows to one conversation
-- Location: tests/e2e/admin-chat-history.spec.ts:64:3
+- Name: ai-chat.spec.ts >> AI chat >> a failed request shows a clear error message
+- Location: tests/e2e/ai-chat.spec.ts:35:3
 
 # Error details
 
