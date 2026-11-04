@@ -6,8 +6,8 @@
 
 # Test info
 
-- Name: mpesa-ops-dashboard.spec.ts >> M-PESA Ops dashboard >> pending donation appears and donation filter narrows rows
-- Location: tests/e2e/mpesa-ops-dashboard.spec.ts:91:3
+- Name: ai-chat.spec.ts >> AI chat >> a real question gets a streamed answer
+- Location: tests/e2e/ai-chat.spec.ts:25:3
 
 # Error details
 
