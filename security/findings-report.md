@@ -1,6 +1,6 @@
 # Security Findings Report
 
-Generated: 2026-06-10T12:51:09.083Z
+Generated: 2026-11-14T09:53:12.597Z
 
 ## Summary
 
