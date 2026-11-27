@@ -5,5 +5,8 @@
 - [x] Build the admin M-PESA operations dashboard (pending donations, callback ledger, denied attempts, USSD bursts, Simulated badges) with e2e tests.
 - [x] Repair AI chat CORS, gateway handling, browser errors; e2e coverage written.
 - [x] Verify callback idempotency/replay behavior and focused test suites.
-- [ ] Verify the AI chat e2e spec returns a real streamed answer in the preview (blocked earlier by unavailable test logins).
-- [ ] Add the four test-login secrets (TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD, TEST_USER_EMAIL, TEST_USER_PASSWORD) plus ALERT_SCHEDULER_TOKEN to the GitHub repository secrets — user action in GitHub settings.
+- [ ] Resume Lovable Cloud and confirm it is healthy before live verification (approved by the user; pending execution).
+- [ ] Install Playwright Chromium if needed, then verify authenticated English and Swahili AI answers stream successfully in the preview.
+- [ ] Run report-aligned regression suites across onboarding, protocols/offline access, emergency/CHW workflows, push, admin reporting, USSD/SMS, and M-PESA; fix confirmed failures.
+- [ ] Verify existing scheduled jobs and CI secret requirements without exposing secret values; list any missing GitHub secrets as user actions.
+- [ ] Update this roadmap with verified outcomes and remaining external blockers.
